@@ -1,0 +1,46 @@
+cat > .gitignore << 'EOF'
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Model files (too large for git)
+*.pt
+*.pth
+*.safetensors
+*.bin
+
+# Video files (too large)
+*.mp4
+*.avi
+*.mov
+input_video/
+
+# Output files
+annotated_*.mp4
+*_report.csv
+*_report.html
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lightning AI / HuggingFace cache
+.cache/
+.config/
+lightning_logs/
+EOF
