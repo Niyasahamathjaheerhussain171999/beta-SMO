@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "total_shots": 0,
+    "shots_on_target": 0,
+    "shots_off_target": 0,
+    "shots_blocked": 0,
+    "goals": 0
+  },
+  "by_team": {
+    "Shot on target": {
+      "Blue": 0,
+      "Red": 0
+    },
+    "Shot off target": {
+      "Blue": 0,
+      "Red": 0
+    },
+    "Shot blocked": {
+      "Blue": 0,
+      "Red": 0
+    },
+    "Goal": {
+      "Blue": 0,
+      "Red": 0
+    }
+  },
+  "events": []
+}

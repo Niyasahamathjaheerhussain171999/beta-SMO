@@ -9,4 +9,458 @@
       "to_team": "Red",
       "pass_type": "Short pass",
       "result": "Fail",
-      "distance_px": 
+      "distance_px": 130.3000030517578,
+      "confidence": 85
+    },
+    {
+      "time": "0:06",
+      "frame": 195,
+      "from_player": 12,
+      "to_player": 2,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Success",
+      "distance_px": 144.39999389648438,
+      "confidence": 82
+    },
+    {
+      "time": "0:10",
+      "frame": 293,
+      "from_player": 1,
+      "to_player": 158,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 200.3000030517578,
+      "confidence": 85
+    },
+    {
+      "time": "0:34",
+      "frame": 989,
+      "from_player": 240,
+      "to_player": 533,
+      "from_team": "Red",
+      "to_team": "Unknown",
+      "pass_type": "Short pass",
+      "result": "Unknown",
+      "distance_px": 187.5,
+      "confidence": 85
+    },
+    {
+      "time": "0:38",
+      "frame": 1116,
+      "from_player": 533,
+      "to_player": 623,
+      "from_team": "Unknown",
+      "to_team": "Unknown",
+      "pass_type": "Short pass",
+      "result": "Unknown",
+      "distance_px": 347.20001220703125,
+      "confidence": 85
+    },
+    {
+      "time": "0:40",
+      "frame": 1175,
+      "from_player": 642,
+      "to_player": 643,
+      "from_team": "Unknown",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Unknown",
+      "distance_px": 372.70001220703125,
+      "confidence": 82
+    },
+    {
+      "time": "0:43",
+      "frame": 1268,
+      "from_player": 200,
+      "to_player": 648,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 451.8999938964844,
+      "confidence": 85
+    },
+    {
+      "time": "0:45",
+      "frame": 1332,
+      "from_player": 550,
+      "to_player": 553,
+      "from_team": "Red",
+      "to_team": "Blue",
+      "pass_type": "Long pass",
+      "result": "Fail",
+      "distance_px": 625.0,
+      "confidence": 82
+    },
+    {
+      "time": "1:09",
+      "frame": 2011,
+      "from_player": 835,
+      "to_player": 957,
+      "from_team": "Red",
+      "to_team": "Blue",
+      "pass_type": "Short pass",
+      "result": "Fail",
+      "distance_px": 310.20001220703125,
+      "confidence": 85
+    },
+    {
+      "time": "1:27",
+      "frame": 2539,
+      "from_player": 1253,
+      "to_player": 986,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Success",
+      "distance_px": 821.0999755859375,
+      "confidence": 82
+    },
+    {
+      "time": "1:33",
+      "frame": 2704,
+      "from_player": 986,
+      "to_player": 966,
+      "from_team": "Red",
+      "to_team": "Blue",
+      "pass_type": "Short pass",
+      "result": "Fail",
+      "distance_px": 168.60000610351562,
+      "confidence": 85
+    },
+    {
+      "time": "1:38",
+      "frame": 2844,
+      "from_player": 966,
+      "to_player": 1247,
+      "from_team": "Blue",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Fail",
+      "distance_px": 623.2999877929688,
+      "confidence": 85
+    },
+    {
+      "time": "1:51",
+      "frame": 3238,
+      "from_player": 1247,
+      "to_player": 2164,
+      "from_team": "Red",
+      "to_team": "Blue",
+      "pass_type": "Short pass",
+      "result": "Fail",
+      "distance_px": 124.80000305175781,
+      "confidence": 85
+    },
+    {
+      "time": "2:03",
+      "frame": 3589,
+      "from_player": 2308,
+      "to_player": 2449,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 74.5999984741211,
+      "confidence": 85
+    },
+    {
+      "time": "2:06",
+      "frame": 3677,
+      "from_player": 1963,
+      "to_player": 2472,
+      "from_team": "Blue",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Fail",
+      "distance_px": 192.3000030517578,
+      "confidence": 85
+    },
+    {
+      "time": "2:11",
+      "frame": 3819,
+      "from_player": 2472,
+      "to_player": 2574,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 113.5,
+      "confidence": 85
+    },
+    {
+      "time": "2:15",
+      "frame": 3923,
+      "from_player": 2314,
+      "to_player": 2455,
+      "from_team": "Blue",
+      "to_team": "Blue",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 385.1000061035156,
+      "confidence": 85
+    },
+    {
+      "time": "2:24",
+      "frame": 4193,
+      "from_player": 2888,
+      "to_player": 1551,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Success",
+      "distance_px": 594.2999877929688,
+      "confidence": 82
+    },
+    {
+      "time": "2:26",
+      "frame": 4245,
+      "from_player": 2455,
+      "to_player": 2899,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 804.9000244140625,
+      "confidence": 85
+    },
+    {
+      "time": "2:31",
+      "frame": 4383,
+      "from_player": 2899,
+      "to_player": 3009,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Success",
+      "distance_px": 1139.4000244140625,
+      "confidence": 82
+    },
+    {
+      "time": "2:37",
+      "frame": 4555,
+      "from_player": 3009,
+      "to_player": 2954,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Success",
+      "distance_px": 627.4000244140625,
+      "confidence": 82
+    },
+    {
+      "time": "2:39",
+      "frame": 4631,
+      "from_player": 2954,
+      "to_player": 3009,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Success",
+      "distance_px": 557.2999877929688,
+      "confidence": 82
+    },
+    {
+      "time": "2:48",
+      "frame": 4880,
+      "from_player": 3009,
+      "to_player": 3174,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 124.0,
+      "confidence": 85
+    },
+    {
+      "time": "3:00",
+      "frame": 5243,
+      "from_player": 3174,
+      "to_player": 3341,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 269.1000061035156,
+      "confidence": 85
+    },
+    {
+      "time": "3:02",
+      "frame": 5279,
+      "from_player": 3341,
+      "to_player": 3393,
+      "from_team": "Red",
+      "to_team": "Unknown",
+      "pass_type": "Short pass",
+      "result": "Unknown",
+      "distance_px": 382.3999938964844,
+      "confidence": 85
+    },
+    {
+      "time": "3:18",
+      "frame": 5757,
+      "from_player": 3314,
+      "to_player": 3291,
+      "from_team": "Red",
+      "to_team": "Blue",
+      "pass_type": "Short pass",
+      "result": "Fail",
+      "distance_px": 269.8999938964844,
+      "confidence": 85
+    },
+    {
+      "time": "3:23",
+      "frame": 5906,
+      "from_player": 3291,
+      "to_player": 3239,
+      "from_team": "Blue",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Fail",
+      "distance_px": 176.60000610351562,
+      "confidence": 82
+    },
+    {
+      "time": "3:51",
+      "frame": 6711,
+      "from_player": 3291,
+      "to_player": 3346,
+      "from_team": "Blue",
+      "to_team": "Blue",
+      "pass_type": "Short pass",
+      "result": "Success",
+      "distance_px": 87.0999984741211,
+      "confidence": 85
+    },
+    {
+      "time": "3:52",
+      "frame": 6750,
+      "from_player": 3291,
+      "to_player": 3239,
+      "from_team": "Blue",
+      "to_team": "Red",
+      "pass_type": "Short pass",
+      "result": "Fail",
+      "distance_px": 54.20000076293945,
+      "confidence": 85
+    },
+    {
+      "time": "3:56",
+      "frame": 6855,
+      "from_player": 3239,
+      "to_player": 3814,
+      "from_team": "Red",
+      "to_team": "Blue",
+      "pass_type": "Long pass",
+      "result": "Fail",
+      "distance_px": 817.5,
+      "confidence": 82
+    },
+    {
+      "time": "4:01",
+      "frame": 7010,
+      "from_player": 3914,
+      "to_player": 4378,
+      "from_team": "Unknown",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Unknown",
+      "distance_px": 652.7999877929688,
+      "confidence": 82
+    },
+    {
+      "time": "4:57",
+      "frame": 8635,
+      "from_player": 5341,
+      "to_player": 5043,
+      "from_team": "Blue",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Fail",
+      "distance_px": 874.5,
+      "confidence": 82
+    },
+    {
+      "time": "5:08",
+      "frame": 8954,
+      "from_player": 5043,
+      "to_player": 5341,
+      "from_team": "Red",
+      "to_team": "Red",
+      "pass_type": "Long pass",
+      "result": "Success",
+      "distance_px": 722.4000244140625,
+      "confidence": 82
+    }
+  ],
+  "stats": {
+    "Blue": {
+      "Short pass": {
+        "success": 2,
+        "fail": 4,
+        "total": 6
+      },
+      "Long pass": {
+        "success": 0,
+        "fail": 2,
+        "total": 2
+      },
+      "Cross": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      },
+      "Short throw-in": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      },
+      "Long throw-in": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      },
+      "Header": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      }
+    },
+    "Red": {
+      "Short pass": {
+        "success": 7,
+        "fail": 4,
+        "total": 13
+      },
+      "Long pass": {
+        "success": 7,
+        "fail": 2,
+        "total": 9
+      },
+      "Cross": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      },
+      "Short throw-in": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      },
+      "Long throw-in": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      },
+      "Header": {
+        "success": 0,
+        "fail": 0,
+        "total": 0
+      }
+    }
+  }
+}
