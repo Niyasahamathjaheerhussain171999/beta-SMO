@@ -211,23 +211,42 @@ class ShotDetector:
     
     def _vlm_stage1_is_shot(self, frame_crop, ball_speed):
         """
-        VLM Stage 1: Detect if this is a shot on goal.
+        VLM Stage 1: Detect if this is a shot on goal - ENHANCED PROMPT
         """
-        prompt = f"""SOCCER SHOT DETECTION - Analyze this image carefully.
+        prompt = f"""SOCCER SHOT DETECTION - Analyze this image very carefully.
 
-Ball is moving at HIGH SPEED ({ball_speed:.0f} pixels/frame).
+BALL SPEED: {ball_speed:.0f} pixels/frame (HIGH SPEED indicates potential shot)
 
-Is this a SHOT ON GOAL? Look for:
-- Player striking the ball with power
-- Ball traveling toward goal direction
-- Shooting body posture (leg follow-through)
-- Goal/goalkeeper visible in frame
+LOOK AT THE IMAGE TO DETERMINE: Is this a SHOT ON GOAL?
 
-A SHOT is different from a PASS:
-- SHOT = Player kicks ball HARD toward goal
-- PASS = Player passes to teammate
+STEP 1: CHECK PLAYER'S ACTION:
+   - Is the player KICKING the ball with POWER/HARD force?
+   - Is the player's leg in FOLLOW-THROUGH position (extended leg after kick)?
+   - Is the player facing toward the GOAL direction?
+   
+STEP 2: CHECK BALL TRAJECTORY:
+   - Is the ball moving FAST toward the GOAL?
+   - Is the ball traveling toward the GOAL POSTS or GOAL AREA?
+   - Is the ball NOT traveling toward a teammate (not a pass)?
 
-Answer: Is this a SHOT? Reply only YES or NO."""
+STEP 3: CHECK FIELD POSITION:
+   - Is the player in SHOOTING POSITION (near goal, in attacking area)?
+   - Is the GOAL FRAME visible in the image?
+   - Is a GOALKEEPER visible (indicating shot toward goal)?
+
+SHOT vs PASS DIFFERENCE:
+   - SHOT = Player kicks ball HARD/POWERFULLY toward GOAL, attacking intent
+   - PASS = Player passes ball to TEAMMATE, ball travels toward another player
+
+VISUAL CUES FOR SHOT:
+   - Powerful kicking motion (leg fully extended, strong follow-through)
+   - Ball trajectory heading toward GOAL FRAME
+   - Player in attacking/forward position
+   - Goal or goalkeeper visible in frame
+   - High ball speed
+   - Ball NOT going to nearby teammate
+
+Answer: Is this a SHOT ON GOAL? Reply only YES or NO."""
 
         response = self.vlm_query(frame_crop, prompt, max_tokens=10)
         response_upper = response.upper()
@@ -239,49 +258,97 @@ Answer: Is this a SHOT? Reply only YES or NO."""
     
     def _vlm_stage2_shot_outcome(self, frame_crop):
         """
-        VLM Stage 2: Classify shot outcome (on target / off target).
+        VLM Stage 2: Classify shot outcome - ENHANCED PROMPT FOR 100% UNDERSTANDING
         """
-        prompt = """SHOT OUTCOME ANALYSIS - Look at the soccer shot in this image.
+        prompt = """SHOT OUTCOME ANALYSIS - Look at this soccer shot image carefully.
 
-Classify the shot outcome:
+A SHOT ON GOAL has been detected. Now classify WHERE the ball is going:
 
-(A) ON TARGET - Ball is heading toward the goal frame
-    - Would require goalkeeper save
-    - Going between the posts and under crossbar
-    
-(B) OFF TARGET - Ball is missing the goal
-    - Going wide of the posts
-    - Going over the crossbar
-    - Will not threaten the goalkeeper
-    
-(C) BLOCKED - Ball is being blocked by a defender
-    - Defender's body intercepting the ball
-    - Ball deflected before reaching goal
-    
-(D) GOAL - Ball is going into the net
-    - Past the goalkeeper
-    - Clearly entering the goal
+STEP 1: LOOK AT THE GOAL FRAME:
+   - Identify the GOAL POSTS (left post, right post)
+   - Identify the CROSSBAR (top horizontal bar)
+   - Identify the GOAL NET (if visible)
 
-Based on ball trajectory and position, my answer is:"""
+STEP 2: TRACE THE BALL TRAJECTORY:
+   - Where is the ball NOW in the image?
+   - Where is the ball HEADING toward?
+   - Will the ball go INTO the goal or MISS the goal?
+
+STEP 3: CHECK FOR DEFENDERS:
+   - Is a DEFENDER blocking/intercepting the ball?
+   - Is the ball being DEFLECTED by a defender's body?
+
+STEP 4: CHECK GOALKEEPER POSITION:
+   - Is the ball PAST the goalkeeper?
+   - Is the goalkeeper BEATEN (ball already past)?
+
+CLASSIFY THE SHOT OUTCOME:
+
+(A) SHOT ON TARGET - Ball heading INTO the goal frame
+    VISUAL CUES:
+    - Ball trajectory is heading BETWEEN the two goal posts
+    - Ball is heading UNDER the crossbar (not over)
+    - Ball would go INTO the goal if not saved
+    - Goalkeeper would need to make a SAVE
+    - Ball is THREATENING the goal
+    
+(B) SHOT OFF TARGET - Ball MISSING the goal frame
+    VISUAL CUES:
+    - Ball is going WIDE (to the left or right of posts)
+    - Ball is going OVER the crossbar (too high)
+    - Ball will NOT enter the goal frame
+    - Ball will NOT threaten the goalkeeper
+    - Ball is clearly MISSING the goal
+    
+(C) SHOT BLOCKED - Ball is being BLOCKED by a defender
+    VISUAL CUES:
+    - A DEFENDER's body is intercepting the ball
+    - Ball is being DEFLECTED or STOPPED by defender
+    - Defender's leg/body is in the way of the ball
+    - Ball is NOT reaching the goal due to defender
+    
+(D) GOAL - Ball is GOING INTO THE NET
+    VISUAL CUES:
+    - Ball is PAST the goalkeeper (goalkeeper beaten)
+    - Ball is CLEARLY entering the goal/net
+    - Ball is INSIDE the goal frame, past the goal line
+    - Goal NET is visible and ball is in/entering it
+    - This is a SCORED GOAL
+
+LOOK AT THE IMAGE:
+1. Check ball position relative to goal posts
+2. Check if ball is going into goal or missing
+3. Check if any defender is blocking
+4. Check if ball is past goalkeeper
+
+ANSWER WITH ONLY ONE LETTER (A, B, C, or D):
+My classification:"""
 
         response = self.vlm_query(frame_crop, prompt, max_tokens=20)
         response_upper = response.upper().strip()
         
-        # Extract classification
+        # Extract classification - check for letter first
         first_char = ''
         for c in response_upper:
             if c in 'ABCD':
                 first_char = c
                 break
         
-        # Parse response
-        if first_char == 'D' or 'GOAL' in response_upper:
+        # Enhanced parsing with keyword fallback
+        # GOAL (D) - highest priority
+        if first_char == 'D' or 'GOAL' in response_upper or ('NET' in response_upper and 'ENTER' in response_upper):
             return "Goal", 90
-        elif first_char == 'A' or 'TARGET' in response_upper or 'ON' in response_upper:
-            return "Shot on target", 82
-        elif first_char == 'C' or 'BLOCK' in response_upper:
-            return "Shot blocked", 78
-        elif first_char == 'B' or 'OFF' in response_upper or 'MISS' in response_upper or 'WIDE' in response_upper:
+        
+        # BLOCKED (C) - check for defender blocking
+        if first_char == 'C' or 'BLOCK' in response_upper or ('DEFENDER' in response_upper and 'INTERCEPT' in response_upper):
+            return "Shot blocked", 80
+        
+        # ON TARGET (A) - ball heading into goal frame
+        if first_char == 'A' or ('ON' in response_upper and 'TARGET' in response_upper) or ('BETWEEN' in response_upper and 'POST' in response_upper):
+            return "Shot on target", 85
+        
+        # OFF TARGET (B) - ball missing goal
+        if first_char == 'B' or 'OFF' in response_upper or 'MISS' in response_upper or 'WIDE' in response_upper or 'OVER' in response_upper:
             return "Shot off target", 80
         
         # Default to off target if uncertain

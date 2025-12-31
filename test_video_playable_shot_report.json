@@ -1,15 +1,15 @@
 {
   "summary": {
-    "total_shots": 0,
-    "shots_on_target": 0,
+    "total_shots": 38,
+    "shots_on_target": 38,
     "shots_off_target": 0,
     "shots_blocked": 0,
     "goals": 0
   },
   "by_team": {
     "Shot on target": {
-      "Blue": 0,
-      "Red": 0
+      "Blue": 27,
+      "Red": 11
     },
     "Shot off target": {
       "Blue": 0,
@@ -24,5 +24,12 @@
       "Red": 0
     }
   },
-  "events": []
-}
+  "events": [
+    {
+      "time": "0:03",
+      "frame": 82,
+      "shooter_id": 24,
+      "team": "Blue",
+      "shot_type": "Shot on target",
+      "confidence": 83,
+      "shooter_x": 

@@ -190,55 +190,104 @@ Simple answer: YES or NO"""
 
 
 def vlm_stage2_classify_type(frame_crop, geometry_suggestion, context_info):
-    """Stage 2: Classify pass type - FIXED VERSION"""
+    """Stage 2: Classify pass type - ENHANCED PROMPT FOR 100% UNDERSTANDING"""
     distance = context_info.get('distance', 'unknown')
     position = context_info.get('position', 'unknown')
     
-    # Simpler, more direct prompt that forces a single letter answer
-    prompt = f"""Soccer pass classification. Distance: {distance}px. Position: {position}.
+    # ENHANCED PROMPT: Detailed visual descriptions for 100% VLM understanding
+    prompt = f"""SOCCER PASS TYPE CLASSIFICATION - Analyze this image carefully.
 
-Look at this image and classify the pass type.
+CONTEXT: Distance={distance}px, Position={position}, Geometry suggests: {geometry_suggestion}
 
-RULES:
-- 60% of passes are SHORT PASS (foot kick, close distance)
-- 20% of passes are LONG PASS (powerful foot kick, far distance)
-- 5% are CROSS (wing to penalty area)
-- 5% are THROW-IN (player uses BOTH HANDS from sideline)
-- 5% are HEADER (ball touches player's HEAD)
+LOOK AT THE IMAGE AND IDENTIFY WHAT IS HAPPENING:
 
-Answer with ONLY ONE LETTER:
-A = SHORT PASS
-B = LONG PASS
-C = CROSS
-D = THROW-IN
-E = HEADER
+STEP 1: CHECK PLAYER'S BODY POSITION AND ACTION:
+   - Is the player using their FOOT to kick? → PASS (A, B, or C)
+   - Is the player using BOTH HANDS holding ball above/behind head? → THROW-IN (D)
+   - Is the player using their HEAD/FOREHEAD to touch ball? → HEADER (E)
 
-My answer:"""
+STEP 2: IF USING FOOT (PASS A, B, or C):
+   - Check the ball trajectory and field position:
+     * Ball rolling on ground, short distance, simple foot pass → SHORT PASS (A)
+     * Ball kicked with power, traveling long distance across field → LONG PASS (B)
+     * Ball kicked from WING/SIDELINE area toward PENALTY BOX/CENTER, aerial or high → CROSS (C)
 
-    response = vlm_query(frame_crop, prompt, max_tokens=5)
+STEP 3: IF USING HANDS:
+   - Player at SIDELINE/EDGE of field, ball in hands above head → THROW-IN (D)
+
+STEP 4: IF USING HEAD:
+   - Player's HEAD or FOREHEAD making contact with ball in air → HEADER (E)
+
+DETAILED DESCRIPTIONS:
+
+(A) SHORT PASS:
+   - Player kicks ball with foot (inside foot or simple kick)
+   - Ball travels on ground, short distance (< 250px)
+   - Ball rolling smoothly between nearby players
+   - No high trajectory, no powerful kick
+   - LOOK FOR: Foot near ball, ground-level trajectory, short distance
+
+(B) LONG PASS:
+   - Player kicks ball with foot with POWER
+   - Ball travels LONG distance across field (> 400px)
+   - Strong kick, ball travels far
+   - May be ground or slightly aerial
+   - LOOK FOR: Powerful kicking posture, long ball trajectory, far distance
+
+(C) CROSS:
+   - Player at WING/SIDELINE area (left or right side of field)
+   - Ball kicked toward PENALTY BOX or CENTER AREA
+   - Ball is AERIAL or HIGH trajectory into penalty area
+   - Aimed at attackers in front of goal
+   - LOOK FOR: Player at sideline/wing, ball flying high toward penalty box
+
+(D) THROW-IN:
+   - Player standing at SIDELINE/EDGE of field
+   - Player holding ball with BOTH HANDS
+   - Ball is ABOVE HEAD or BEHIND HEAD
+   - Player is THROWING ball into field
+   - LOOK FOR: Two hands on ball, ball above/behind head, player at field edge
+
+(E) HEADER:
+   - Player's HEAD or FOREHEAD making contact with ball
+   - Ball is in the AIR (not on ground)
+   - Player jumping or head elevated toward ball
+   - Ball is redirected by head contact
+   - LOOK FOR: Head touching ball, ball in air, jumping/elevated head position
+
+ANSWER WITH ONLY ONE LETTER (A, B, C, D, or E):
+My classification:"""
+
+    response = vlm_query(frame_crop, prompt, max_tokens=10)
     response_upper = response.upper().strip()
     
-    # Extract ONLY the first letter A-E
+    # Extract the first letter A-E
     first_char = ''
     for c in response_upper:
         if c in 'ABCDE':
             first_char = c
             break
     
-    # Debug: print VLM response
-    # print(f"    [VLM Raw] '{response}' -> Letter: '{first_char}'")
+    # Enhanced parsing: Check letter first, then keywords as fallback
+    # THROW-IN (D) - highest priority keywords
+    if first_char == 'D' or 'THROW' in response_upper or ('HAND' in response_upper and 'HEAD' not in response_upper):
+        return "Throw-in", 85
     
-    # STRICT letter-only parsing (no keyword matching!)
-    if first_char == 'A':
-        return "Short pass", 85
-    elif first_char == 'B':
+    # HEADER (E) - check for head contact
+    if first_char == 'E' or 'HEADER' in response_upper or ('HEAD' in response_upper and 'HAND' not in response_upper):
+        return "Header", 82
+    
+    # CROSS (C) - wing to penalty area
+    if first_char == 'C' or 'CROSS' in response_upper or ('WING' in response_upper and 'PENALTY' in response_upper):
+        return "Cross", 82
+    
+    # LONG PASS (B) - powerful, far distance
+    if first_char == 'B' or 'LONG' in response_upper or ('POWER' in response_upper and 'SHORT' not in response_upper):
         return "Long pass", 82
-    elif first_char == 'C':
-        return "Cross", 80
-    elif first_char == 'D':
-        return "Throw-in", 82
-    elif first_char == 'E':
-        return "Header", 75  # Lower confidence for Header - require extra validation
+    
+    # SHORT PASS (A) - default for foot passes
+    if first_char == 'A' or 'SHORT' in response_upper or (first_char == '' and 'PASS' in response_upper):
+        return "Short pass", 85
     
     # If VLM doesn't give clear answer, TRUST GEOMETRY!
     return geometry_suggestion, 75
@@ -490,6 +539,7 @@ def annotate_frame(frame, pass_event=None, shot_event=None, players=None, ball_x
 
 def run_analysis(video_path, debug=False):
     """Main analysis function"""
+    global SAVE_ANNOTATED_VIDEO  # Declare global to avoid UnboundLocalError
     
     # Check video exists
     if not os.path.exists(video_path):
@@ -559,10 +609,36 @@ def run_analysis(video_path, debug=False):
     
     # Video writer for annotated output
     video_writer = None
-    output_video_path = f"annotated_{os.path.basename(video_path).replace(' ', '_')}"
+    output_video_path = f"annotated_{os.path.basename(video_path).replace(' ', '_').replace('(', '').replace(')', '')}"
     if SAVE_ANNOTATED_VIDEO:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+        # Try H264 codec first (browser compatible), fallback to mp4v
+        codecs_to_try = [
+            ('avc1', '.mp4'),   # H.264 - most compatible
+            ('H264', '.mp4'),   # H.264 alternate
+            ('XVID', '.avi'),   # XVID - fallback
+            ('mp4v', '.mp4'),   # mp4v - last resort
+        ]
+        
+        for codec, ext in codecs_to_try:
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                test_path = output_video_path.rsplit('.', 1)[0] + ext
+                video_writer = cv2.VideoWriter(test_path, fourcc, fps, (frame_width, frame_height))
+                
+                # Check if writer opened successfully
+                if video_writer.isOpened():
+                    output_video_path = test_path
+                    print(f"✅ Video writer using codec: {codec}")
+                    break
+                else:
+                    video_writer.release()
+                    video_writer = None
+            except:
+                continue
+        
+        if video_writer is None or not video_writer.isOpened():
+            print("⚠️ Warning: Could not create video writer. Annotated video will not be saved.")
+            SAVE_ANNOTATED_VIDEO = False
     
     # Track recent events for annotation
     recent_pass = None
@@ -782,7 +858,7 @@ def run_analysis(video_path, debug=False):
                             print(f"  [Shot] {shot_event['time']} | {shooter_team} #{current_owner} | {shot_type} | Conf: {shot_conf}%")
         
         # === ANNOTATE FRAME ===
-        if SAVE_ANNOTATED_VIDEO:
+        if SAVE_ANNOTATED_VIDEO and video_writer is not None and video_writer.isOpened():
             annotated_frame = annotate_frame(frame, recent_pass, recent_shot, None, ball_xy)
             video_writer.write(annotated_frame)
     
@@ -915,6 +991,13 @@ if __name__ == "__main__":
         print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
+
+
+
+
+
+
+
 
 
 

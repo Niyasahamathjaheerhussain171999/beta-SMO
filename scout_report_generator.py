@@ -1091,7 +1091,14 @@ def generate_full_scout_report_html(pass_events, shot_events, video_path,
             document.getElementById('popupTime').textContent = formatTime(seconds);
             document.getElementById('popupConfidence').textContent = confidence + '%';
             
-            // *** KEY: Load ANNOTATED video in popup ***
+            // *** KEY: Try ANNOTATED video first, fallback to ORIGINAL ***
+            popupVideo.onerror = function() {{
+                console.log('Annotated video failed, trying original...');
+                popupVideo.src = ORIGINAL_VIDEO;
+                popupVideo.currentTime = Math.max(0, seconds - 2);
+                popupVideo.play();
+            }};
+            
             popupVideo.src = ANNOTATED_VIDEO;
             popupVideo.currentTime = Math.max(0, seconds - 2); // Start 2 sec before
             
