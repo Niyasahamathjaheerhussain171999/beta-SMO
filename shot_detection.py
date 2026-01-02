@@ -29,16 +29,16 @@ import numpy as np
 from collections import deque
 
 
-# === SHOT DETECTION PARAMETERS (BALANCED FOR DETECTION) ===
+# === SHOT DETECTION PARAMETERS (OPTIMIZED FOR 5-MIN VIDEO) ===
 SHOT_PROXIMITY_THRESHOLD = 100         # Ball near player for potential shot
-SHOT_VELOCITY_THRESHOLD = 18           # ADJUSTED: Balance between detecting shots and filtering passes
+SHOT_VELOCITY_THRESHOLD = 15           # LOWERED: Detect shots with moderate speed
 GOAL_ZONE_MARGIN = 0.25                # 25% from each end = goal areas
-SHOT_COOLDOWN_FRAMES = 45              # 1.5 seconds between shots
+SHOT_COOLDOWN_FRAMES = 30              # REDUCED: 1 second between shots (was 45 = 1.5s)
 MIN_SHOT_DISTANCE_TO_GOAL = 50         # Minimum distance for shot
-SHOT_CONFIDENCE_THRESHOLD = 70         # ADJUSTED: Balance between accuracy and detection rate
+SHOT_CONFIDENCE_THRESHOLD = 65         # LOWERED: Accept more shots (was 70)
 
 # === REFINED DETECTION PARAMETERS ===
-GOAL_PROXIMITY_RADIUS_METERS = 15      # ADJUSTED: 15-meter radius (was 10m - too restrictive)
+GOAL_PROXIMITY_RADIUS_METERS = 20      # INCREASED: 20-meter radius for better shot detection
 GOAL_WIDTH_METERS = 7.32               # Standard goal width in meters
 GOAL_HEIGHT_METERS = 2.44              # Standard goal height in meters
 PIXELS_PER_METER = None                # Will be calibrated from pitch detection
@@ -407,7 +407,7 @@ class ShotDetector:
         # These filters ensure only clear, unambiguous shots are analyzed
         # This prevents crosses, hard passes, and clearances from triggering VLM
         
-        # 1. Ball must be moving FAST enough (18 px/frame = shot, excludes soft passes)
+        # 1. Ball must be moving FAST enough (15 px/frame = shot, excludes soft passes)
         if speed < SHOT_VELOCITY_THRESHOLD:
             return False, None, 0, None
         
@@ -416,10 +416,10 @@ class ShotDetector:
         if not self.is_in_shooting_range(shooter_pos):
             return False, None, 0, None
         
-        # 3. Calculate distance to goal - only trigger if within 10m radius
+        # 3. Calculate distance to goal - only trigger if within 20m radius
         distance_to_goal, target_goal = self.calculate_distance_to_goal(ball_xy)
         
-        # Proximity Constraint: Only trigger if ball is within 10-meter radius of goal
+        # Proximity Constraint: Only trigger if ball is within 20-meter radius of goal
         if distance_to_goal > GOAL_PROXIMITY_RADIUS_METERS:
             return False, None, 0, None
         
@@ -441,7 +441,7 @@ class ShotDetector:
             crop, shooter_team, speed, distance_to_goal, angle_of_arrival
         )
         
-        # 6. Final filter: Require high VLM confidence (80%+) to exclude uncertain guesses
+        # 6. Final filter: Require VLM confidence (65%+) to accept shots
         if is_shot and vlm_conf >= SHOT_CONFIDENCE_THRESHOLD:
             # Prepare metrics for recording
             metrics = {
@@ -780,4 +780,3 @@ def generate_shot_report_json(shot_events, stats, output_path="shot_report.json"
     
     print(f"✅ Shot report JSON saved to: {output_path}")
     return output_path
-

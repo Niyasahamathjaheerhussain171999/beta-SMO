@@ -33,31 +33,18 @@ except ImportError:
     generate_shot_report_csv = None
     print("⚠️  Warning: shot_detection module not found. Shot detection will be disabled.")
 
+# Try both possible file names (shot_report_generator.py or scout_report_generator.py)
 try:
     from shot_report_generator import generate_full_scout_report_html
     SHOT_REPORT_GENERATOR_AVAILABLE = True
 except ImportError:
-    SHOT_REPORT_GENERATOR_AVAILABLE = False
-    generate_full_scout_report_html = None
-    print("⚠️  Warning: shot_report_generator module not found. Combined HTML reports will not include shots.")
-
-# Import shot detection module
-try:
-    from shot_detection import ShotDetector, generate_shot_report_json, generate_shot_report_csv
-    SHOT_DETECTION_AVAILABLE = True
-except ImportError:
-    SHOT_DETECTION_AVAILABLE = False
-    ShotDetector = None
-    print("⚠️  Warning: shot_detection module not found. Shot detection will be disabled.")
-
-# Import shot report generator
-try:
-    from shot_report_generator import generate_full_scout_report_html
-    SHOT_REPORT_GENERATOR_AVAILABLE = True
-except ImportError:
-    SHOT_REPORT_GENERATOR_AVAILABLE = False
-    generate_full_scout_report_html = None
-    print("⚠️  Warning: shot_report_generator module not found. HTML reports will not include shots.")
+    try:
+        from scout_report_generator import generate_full_scout_report_html
+        SHOT_REPORT_GENERATOR_AVAILABLE = True
+    except ImportError:
+        SHOT_REPORT_GENERATOR_AVAILABLE = False
+        generate_full_scout_report_html = None
+        print("⚠️  Warning: shot_report_generator/scout_report_generator module not found. HTML reports will not include shots.")
 
 
 # --- 1. CONFIG ---
@@ -99,8 +86,8 @@ CROSS_ZONE_WIDTH = 0.18            # Smaller wing zone
 HEADER_HEIGHT_RATIO = 0.10         # STRICTER: Top 10% only for headers
 
 # Pass classification thresholds - FAVOR SHORT PASSES (60% of all passes)
-SHORT_PASS_THRESHOLD = 180         # RAISED: More passes classified as short
-LONG_PASS_THRESHOLD = 280          # RAISED: Only very long passes are "long"
+SHORT_PASS_THRESHOLD = 150         # Lowered: More passes classified as short (most passes are short!)
+LONG_PASS_THRESHOLD = 300          # Raised: Only very long passes are "long"
 
 # ANTI-THROW-IN BIAS: Throw-ins should be RARE (~5% of passes)
 THROW_IN_DISABLED = False          # Set True to completely disable throw-in detection
@@ -233,81 +220,105 @@ Simple answer: YES or NO"""
 
 def vlm_stage2_classify_type(frame_crop, geometry_suggestion, context_info):
     """
-    Stage 2: Visual pass classification - BALANCED approach.
-    Consider distance and geometry suggestion to avoid bias.
+    Stage 2: Visual pass classification - GOLD STANDARD PROMPT
+    Uses expert-level analysis framework for accurate classification.
     """
     distance = context_info.get('distance', 'unknown')
     position = context_info.get('position', 'pitch')
     ball_height = context_info.get('ball_height', 'normal')
     
-    # Use distance to help classification
     distance_num = int(float(distance)) if distance != 'unknown' else 0
-    is_long = distance_num > SHORT_PASS_THRESHOLD
     
-    prompt = f"""Soccer pass classification. Distance: {distance}px | Position: {position} | Ball height: {ball_height}
+    prompt = f"""You are an expert professional soccer technical analyst. Your task is to analyze the provided image frame and classify the exact type of pass being executed.
 
-CLASSIFY THE PASS TYPE by looking at:
-1. DISTANCE: {distance}px ({'LONG' if is_long else 'SHORT'} range)
-2. PLAYER BODY POSITION:
-   - FOOT kicking = PASS
-   - HEAD contacting ball = HEADER
-   - TWO HANDS holding/throwing from SIDELINE = THROW-IN
-   - From WING toward GOAL BOX = CROSS
+To determine the classification, analyze the following visual cues in order:
 
-GEOMETRY SUGGESTION: {geometry_suggestion}
+1. The Actor & Action: Identify the player in possession or immediately releasing the ball. What is their body mechanic (kicking, heading, throwing)?
 
-Answer ONE letter based on what you SEE:
-(A) SHORT PASS - foot kick, nearby player
-(B) LONG PASS - foot kick, far distance ({distance_num}px)
-(C) CROSS - from wing area into goal box
-(D) THROW-IN - two hands from sideline edge
-(E) HEADER - head redirects ball
+2. Pitch Location: Where on the field is the action happening? (e.g., deep wing, central midfield, sideline).
 
-IMPORTANT: 
-- If distance is >{SHORT_PASS_THRESHOLD}px, consider LONG PASS or CROSS
-- If at sideline position, consider THROW-IN
-- If ball at head height, consider HEADER
-- Don't default to Short pass - look at the distance and position!
+3. Implied Trajectory & Intent: Based on body shape and ball position, is the intended destination near (ground/low) or far (high/power)?
 
-My answer:"""
+Distance context: {distance}px | Position: {position} | Ball height: {ball_height}
 
-    response = vlm_query(frame_crop, prompt, max_tokens=15)
+CRITICAL DISTANCE GUIDELINES:
+- Distance < 150px = SHORT PASS (most common - 60% of all passes!)
+- Distance 150-250px = Usually SHORT PASS (default to short unless clearly long trajectory)
+- Distance >= 250px = Can be LONG PASS (only if clearly intended for long distance)
+
+Based on this visual analysis, you must classify the action strictly into exactly one of the following categories:
+
+Header: The ball is making contact with the player's head for a pass.
+
+Short throw-in: A player on the sideline using two hands to throw the ball to a nearby teammate.
+
+Long throw-in: A player on the sideline using significant power (often a long run-up) to throw the ball a long distance, usually towards the penalty box.
+
+Cross: A player located in a wide area (the wings) kicking the ball high and long into the central attacking penalty area.
+
+Long pass: A kicked pass intended to travel a SIGNIFICANT distance (250px+). Only classify as "Long pass" if the ball is clearly intended to travel a long way through the air.
+
+Short pass: A kicked pass, usually along the ground or very low, intended for a teammate close by. THIS IS THE DEFAULT for most passes (60% of all passes). Default to "Short pass" unless clearly a long-distance pass.
+
+(None): If no clear passing action is occurring in this specific frame.
+
+Output Requirement: Provide only the exact category name from the list above as your final answer. REMEMBER: Most passes are "Short pass" - only classify as "Long pass" if the distance is clearly long (250px+)."""
+
+    response = vlm_query(frame_crop, prompt, max_tokens=20)
     response_upper = response.upper().strip()
     
-    # Parse response - consider distance and context
-    first_char = response_upper[0] if response_upper else ''
+    # Parse response - look for exact category names
+    response_clean = response_upper.replace("(", "").replace(")", "").replace(".", "").strip()
     
-    # THROW-IN: Check for throw-in indicators
-    if (first_char == 'D' or 'THROW' in response_upper) and position == 'sideline':
-        return "Short throw-in" if distance_num < SHORT_PASS_THRESHOLD else "Long throw-in", 80
+    # THROW-IN: VERY STRICT - must be at sideline AND VLM must be very clear
+    # Throw-ins are RARE (only 3 expected in 5-min video)
+    if position == 'sideline' and ("THROW" in response_clean or "THROW-IN" in response_clean):
+        # VLM says throw-in AND we're at sideline - trust it
+        if "SHORT" in response_clean or distance_num < SHORT_PASS_THRESHOLD:
+            return "Short throw-in", 85
+        else:
+            return "Long throw-in", 85
+    elif "THROW" in response_clean and position != 'sideline':
+        # VLM says throw-in but NOT at sideline - likely wrong, use geometry
+        if geometry_suggestion and geometry_suggestion not in ["Short throw-in", "Long throw-in"]:
+            return geometry_suggestion, 75
+        # If geometry also says throw-in, trust it but lower confidence
+        return "Short throw-in" if distance_num < SHORT_PASS_THRESHOLD else "Long throw-in", 70
     
-    # HEADER: Ball at head height
-    if (first_char == 'E' or 'HEAD' in response_upper) and ball_height == 'high':
-        return "Header", 80
+    if "HEADER" in response_clean or ("HEAD" in response_clean and "PASS" not in response_clean):
+        return "Header", 85
     
-    # CROSS: From wing into box
-    if first_char == 'C' or 'CROSS' in response_upper:
-        return "Cross", 80
+    if "CROSS" in response_clean:
+        return "Cross", 85
     
-    # LONG PASS: Long distance
-    if first_char == 'B' or ('LONG' in response_upper and is_long):
-        return "Long pass", 85
-    
-    # SHORT PASS: Default for short distances
-    if first_char == 'A' or ('SHORT' in response_upper):
+    # Check SHORT PASS FIRST (more common - 60% of passes)
+    if "SHORT PASS" in response_clean or ("SHORT" in response_clean and "PASS" in response_clean and "THROW" not in response_clean):
         return "Short pass", 85
+    
+    # Then LONG PASS - BUT VALIDATE WITH DISTANCE (less common - 20% of passes)
+    if "LONG PASS" in response_clean or ("LONG" in response_clean and "PASS" in response_clean and "THROW" not in response_clean):
+        # CRITICAL: Only trust "Long pass" if distance is actually >= 250px
+        # If VLM says "Long pass" but distance is < 250px, it's likely wrong - use "Short pass"
+        if distance_num >= 250:
+            return "Long pass", 85
+        else:
+            # VLM says long but distance suggests short - trust distance
+            return "Short pass", 80  # High confidence but corrected
     
     # Fallback: Use geometry suggestion if VLM unclear
     if geometry_suggestion and geometry_suggestion in ["Short pass", "Long pass", "Cross", "Header", "Short throw-in", "Long throw-in"]:
         return geometry_suggestion, 70
     
-    # Last resort: Use distance to decide
+    # Last resort: Use distance-based classification
+    # DEFAULT to SHORT PASS (most common - 60% of passes)
     if distance_num >= LONG_PASS_THRESHOLD:
-        return "Cross" if position == 'sideline' else "Long pass", 75
-    elif distance_num >= SHORT_PASS_THRESHOLD:
-        return "Long pass", 75
+        return "Cross" if position == 'sideline' else "Long pass", 70
+    elif distance_num < SHORT_PASS_THRESHOLD:
+        # Clear short pass
+        return "Short pass", 70
     else:
-        return "Short pass", 75
+        # Middle range (150-300px): Default to SHORT PASS (most passes are short!)
+        return "Short pass", 65
 
 
 # === NEW: Multi-Frame Temporal Buffer Class ===
@@ -777,17 +788,17 @@ def classify_pass_by_geometry(distance, passer_pos, receiver_pos, ball_xy, passe
     
     # === DEFAULT: REGULAR GROUND PASSES (85% of all passes) ===
     # SHORT PASS is the DEFAULT (60% of all passes!)
-    if distance < SHORT_PASS_THRESHOLD:  # < 180px
+    if distance < SHORT_PASS_THRESHOLD:  # < 150px - CLEAR short pass
         return "Short pass", 88  # HIGH confidence - most common!
-    elif distance > LONG_PASS_THRESHOLD:  # > 280px
+    elif distance >= LONG_PASS_THRESHOLD:  # >= 300px - CLEAR long pass
         return "Long pass", 78
     else:
-        # Middle ground - default to long pass if closer to long threshold
-        mid_point = (SHORT_PASS_THRESHOLD + LONG_PASS_THRESHOLD) / 2
-        if distance > mid_point:
+        # Middle ground (150-300px): DEFAULT to SHORT PASS (60% are short!)
+        # Only classify as long if clearly in upper range (250+ px)
+        if distance >= 250:
             return "Long pass", 65
         else:
-            return "Short pass", 65
+            return "Short pass", 72  # Default to short with good confidence
 
 
 def detect_pitch_boundaries(pitch_model, frame):
@@ -1124,34 +1135,90 @@ def run_analysis(video_path, use_vlm=True, debug=False):
                                         vlm_pass_type, stage2_conf = vlm_stage2_classify_type(crop, geometry_pass_type, context_info)
                                         model_stats['vlm_stage2'] += 1
                                         
-                                        # BALANCED classification: Consider both VLM and geometry
-                                        # Trust VLM when confident, otherwise use geometry
-                                        if stage2_conf >= 80:
-                                            # VLM is confident - trust it
-                                            pass_type = vlm_pass_type
-                                            vlm_conf = stage2_conf
-                                        elif stage2_conf >= 70:
-                                            # VLM moderately confident - check if geometry agrees
-                                            if geometry_pass_type == vlm_pass_type:
-                                                # Both agree - high confidence
-                                                pass_type = vlm_pass_type
-                                                vlm_conf = max(stage2_conf, geometry_conf)
-                                            elif vlm_pass_type in ["Short pass", "Long pass"] and geometry_pass_type in ["Short pass", "Long pass"]:
-                                                # Both say pass type (just different) - trust VLM
+                                        # STRICT classification: RARE events require strict conditions
+                                        # Throw-ins: Must be at sideline AND high confidence
+                                        if vlm_pass_type in ["Short throw-in", "Long throw-in"]:
+                                            # Throw-in requires: sideline position AND high confidence
+                                            if context_info.get('position') == 'sideline' and stage2_conf >= 80:
                                                 pass_type = vlm_pass_type
                                                 vlm_conf = stage2_conf
+                                            elif geometry_pass_type in ["Short throw-in", "Long throw-in"] and context_info.get('position') == 'sideline':
+                                                # Geometry also says throw-in at sideline
+                                                pass_type = geometry_pass_type
+                                                vlm_conf = max(stage2_conf, geometry_conf)
                                             else:
-                                                # Disagree - prefer geometry for rare events, VLM for common
-                                                if geometry_pass_type in ["Header", "Cross", "Throw-in", "Short throw-in", "Long throw-in"]:
-                                                    pass_type = geometry_pass_type  # Trust geometry for rare events
+                                                # Not at sideline or low confidence - likely a pass, not throw-in
+                                                # Default to SHORT PASS (most common)
+                                                if geometry_pass_type in ["Short pass", "Long pass"]:
+                                                    pass_type = geometry_pass_type
                                                     vlm_conf = geometry_conf
                                                 else:
-                                                    pass_type = vlm_pass_type  # Trust VLM for common passes
-                                                    vlm_conf = stage2_conf
+                                                    # Default to SHORT PASS unless clearly long (>= 250px)
+                                                    pass_type = "Short pass" if distance < 250 else "Long pass"
+                                                    vlm_conf = 70
+                                        # Header: Must have high ball
+                                        elif vlm_pass_type == "Header":
+                                            if context_info.get('ball_height') == 'high' and stage2_conf >= 80:
+                                                pass_type = vlm_pass_type
+                                                vlm_conf = stage2_conf
+                                            elif geometry_pass_type == "Header" and context_info.get('ball_height') == 'high':
+                                                pass_type = geometry_pass_type
+                                                vlm_conf = max(stage2_conf, geometry_conf)
+                                            else:
+                                                # Not high ball - likely a pass
+                                                # Default to SHORT PASS (most common)
+                                                if geometry_pass_type in ["Short pass", "Long pass"]:
+                                                    pass_type = geometry_pass_type
+                                                    vlm_conf = geometry_conf
+                                                else:
+                                                    pass_type = "Short pass" if distance < 250 else "Long pass"
+                                                    vlm_conf = 70
+                                        # Cross: Must be from wing/long distance
+                                        elif vlm_pass_type == "Cross":
+                                            # Cross requires: sideline position OR long distance (>=250px) AND high confidence
+                                            if (context_info.get('position') == 'sideline' or distance >= 250) and stage2_conf >= 80:
+                                                pass_type = vlm_pass_type
+                                                vlm_conf = stage2_conf
+                                            elif geometry_pass_type == "Cross" and (context_info.get('position') == 'sideline' or distance >= 250):
+                                                # Geometry also says cross at appropriate position
+                                                pass_type = geometry_pass_type
+                                                vlm_conf = max(stage2_conf, geometry_conf)
+                                            else:
+                                                # Not at sideline or too short - likely a pass
+                                                pass_type = "Short pass" if distance < 250 else "Long pass"
+                                                vlm_conf = 75
+                                        # COMMON PASSES: Validate VLM with distance
                                         else:
-                                            # VLM uncertain - trust geometry suggestion
-                                            pass_type = geometry_pass_type
-                                            vlm_conf = geometry_conf
+                                            # STRICT VALIDATION: If VLM says "Long pass" but distance < 250px, override to "Short pass"
+                                            if vlm_pass_type == "Long pass" and distance < 250:
+                                                # VLM misclassified - trust distance and geometry
+                                                if geometry_pass_type == "Short pass":
+                                                    pass_type = "Short pass"
+                                                    vlm_conf = max(75, geometry_conf)  # High confidence on correction
+                                                else:
+                                                    pass_type = "Short pass"  # Force short if distance suggests it
+                                                    vlm_conf = 75
+                                            elif vlm_pass_type == "Short pass" or (vlm_pass_type == "Long pass" and distance >= 250):
+                                                # VLM classification is validated by distance
+                                                if stage2_conf >= 75:
+                                                    pass_type = vlm_pass_type
+                                                    vlm_conf = stage2_conf
+                                                elif stage2_conf >= 70:
+                                                    if geometry_pass_type == vlm_pass_type:
+                                                        pass_type = vlm_pass_type
+                                                        vlm_conf = max(stage2_conf, geometry_conf)
+                                                    else:
+                                                        # Disagree - prefer VLM if validated by distance
+                                                        pass_type = vlm_pass_type
+                                                        vlm_conf = stage2_conf
+                                                else:
+                                                    # VLM uncertain - use geometry
+                                                    pass_type = geometry_pass_type
+                                                    vlm_conf = geometry_conf
+                                            else:
+                                                # VLM uncertain or unexpected type - use geometry
+                                                pass_type = geometry_pass_type
+                                                vlm_conf = geometry_conf
                             
                             # === Step 4: Compute final confidence ===
                             geo_conf_final = confidence_scorer.compute_geometry_confidence(
@@ -1228,26 +1295,26 @@ def run_analysis(video_path, use_vlm=True, debug=False):
                             last_event_frame = f_idx
                 
                 # === Shot Detection (if enabled) ===
-                # Check for shots more frequently - not just on possession changes
+                # Check for shots EVERY frame when ball is moving (not just on ownership changes)
                 if shot_detector is not None and ball_xy is not None:
-                    # Find closest player to ball as potential shooter
-                    shooter_tid = current_owner
+                    # Always find closest player to ball (shots can happen during transitions)
+                    shooter_tid = None
                     shooter_pos = None
                     shooter_bbox = None
                     shooter_team = "Unknown"
+                    min_dist = float('inf')
                     
-                    # If no current owner, find closest player
-                    if shooter_tid is None and p_det.tracker_id is not None:
-                        min_dist = float('inf')
+                    # Find closest player to ball
+                    if p_det.tracker_id is not None:
                         for tid, p_xy, bbox in zip(p_det.tracker_id, p_det.get_anchors_coordinates(sv.Position.BOTTOM_CENTER), p_det.xyxy):
                             dist = np.linalg.norm(ball_xy - p_xy)
-                            if dist < min_dist and dist < BALL_PROXIMITY_THRESHOLD:
+                            if dist < min_dist and dist < BALL_PROXIMITY_THRESHOLD * 1.5:  # Slightly wider range for shots
                                 min_dist = dist
                                 shooter_tid = tid
                                 shooter_pos = p_xy
                                 shooter_bbox = bbox
                     
-                    # Use current owner if available
+                    # Fallback to current owner if no close player found
                     if shooter_tid is None and current_owner is not None:
                         shooter_tid = current_owner
                         shooter_pos = player_positions.get(shooter_tid)
@@ -1271,14 +1338,14 @@ def run_analysis(video_path, use_vlm=True, debug=False):
                             )
                             if debug:
                                 print(f"  [Shot] {format_time(f_idx/fps)} | {shooter_team} #{shooter_tid} | {shot_type} | Conf: {shot_conf}%")
-                        elif debug and f_idx % 450 == 0:  # Debug shot detection every 450 frames
+                        elif debug and f_idx % 300 == 0:  # Debug shot detection every 300 frames
                             # Check why shots might not be detected
                             speed, dx, dy = shot_detector.get_ball_velocity()
                             in_range = shot_detector.is_in_shooting_range(shooter_pos) if shooter_pos is not None else False
                             if ball_xy and shooter_pos is not None:
                                 dist, _ = shot_detector.calculate_distance_to_goal(ball_xy)
-                                if speed >= 15:  # Any fast ball movement
-                                    print(f"  [Shot Debug] Frame {f_idx}: speed={speed:.1f}, in_range={in_range}, dist={dist:.1f}m - shooter={shooter_team}#{shooter_tid}")
+                                if speed >= 12:  # Lower threshold for debugging
+                                    print(f"  [Shot Debug] Frame {f_idx}: speed={speed:.1f}, in_range={in_range}, dist={dist:.1f}m, shooter={shooter_team}#{shooter_tid}")
                 
                 if current_owner != tid:
                     ownership_start_frame = f_idx
