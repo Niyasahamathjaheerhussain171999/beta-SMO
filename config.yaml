@@ -1,0 +1,175 @@
+# ScoutMe MVP MLOps Configuration
+# This is your "Control Center" - change thresholds here without touching code
+
+pipeline:
+  run_name: "Match_Day_1_Test"
+  input_folder: "data/input"
+  output_folder: "data/output"
+  save_annotated_video: true
+  
+  # Auto-shutdown settings (cost saving)
+  auto_shutdown_enabled: true
+  shutdown_delay_seconds: 10  # Wait 10 seconds before shutdown
+
+models:
+  # YOLO Detection Models
+  yolo_player: "data/football-player-detection.pt"
+  yolo_ball: "data/football-ball-detection.pt"
+  yolo_pitch: "data/football-pitch-detection.pt"
+  
+  # Vision Language Models
+  qwen_model: "Qwen/Qwen2.5-VL-7B-Instruct"
+  molmo_model: "allenai/Molmo-7B-D-0924"
+  
+  # Model versioning
+  model_version: "v1_production"  # Change to v2_experimental when testing new models
+
+# === PASS DETECTION THRESHOLDS ===
+pass_detection:
+  ball_proximity_threshold: 65      # Distance (pixels) to consider ball possession
+  event_cooldown_frames: 50         # Frames between detections (prevents duplicates)
+  min_pass_distance: 60             # Minimum distance (pixels) for a pass
+  min_ownership_frames: 10          # Frames player must have ball before pass
+  confidence_threshold: 75          # Minimum confidence (%) to report pass
+  
+  # Field zones
+  sideline_margin: 0.008            # 0.8% edge for throw-ins (strict)
+  cross_zone_width: 0.18            # Wing zone width
+  header_height_ratio: 0.10         # Top 10% for headers
+  
+  # Pass classification
+  short_pass_threshold: 150         # Pixels - below this = short pass
+  long_pass_threshold: 300           # Pixels - above this = long pass
+  
+  # Special event detection
+  throw_in_disabled: false          # Set true to disable throw-in detection
+  require_pitch_bounds_for_throw_in: true
+  throw_in_consecutive_frames: 4    # Frames required for throw-in
+  header_consecutive_frames: 4      # Frames required for header
+  
+  # VLM settings
+  use_vlm_stage1: true              # Stage 1: Pass verification
+  use_vlm_stage2: true              # Stage 2: Type classification
+  vlm_crop_size: 450                # Crop size for VLM analysis
+  vlm_is_primary: true              # VLM overrides geometry when confident
+  temporal_buffer_size: 75          # Frames (3 seconds) for video analysis
+
+# === SHOT DETECTION THRESHOLDS ===
+shot_detection:
+  # Velocity and speed
+  shot_velocity_threshold: 15       # Pixels per frame (minimum for shot) - INCREASED for small pitches
+  shot_proximity_threshold: 100     # Pixels (ball near player)
+  
+  # Distance and range (RELATIVE SCALING for small pitches)
+  goal_proximity_radius_meters: 35  # Maximum distance from goal (meters) - REDUCED for small pitches
+  goal_proximity_radius_percent: 0.30  # 30% of pitch length (auto-scales)
+  max_shot_angle_degrees: 45        # Maximum angle deviation (tightened from 60°)
+  min_shot_distance_to_goal: 50     # Minimum distance (meters) - reserved
+  
+  # Timing
+  shot_cooldown_frames: 30          # Frames between shot detections
+  shot_verification_frames: 60      # Frames for verification (2 seconds at 30fps)
+  
+  # Confidence
+  shot_confidence_threshold: 65     # Minimum VLM confidence (%) to accept shot
+  
+  # Goal geometry
+  goal_zone_margin: 0.25            # 25% from each end = goal areas
+  goal_width_meters: 7.32           # FIFA standard goal width
+  goal_height_meters: 2.44         # FIFA standard goal height
+  
+  # Debug
+  shot_debug_mode: true             # Enable detailed shot detection logs
+
+# === API CONFIGURATION ===
+api:
+  base_url: "https://api.scoutme.cloud/"
+  api_key: "sk_smo_9f3cA1b8E2D4F6a9B7C0XyZQmPkyam"
+  timeout_seconds: 30
+
+# === TEAM CONFIGURATION ===
+teams:
+  team_a_name: "Blue"
+  team_b_name: "White"
+
+# === MATCH CONTEXT CONFIGURATION ===
+# Frame numbers for half boundaries (set to None for auto-detection)
+match_context:
+  # Manual boundaries (set these if you know exact frames)
+  h1_start: null                  # Frame where 1st half starts (null = auto-detect)
+  h1_end: null                    # Frame where 1st half ends (null = auto-detect)
+  h2_start: null                  # Frame where 2nd half starts (null = auto-detect)
+  h2_end: null                    # Frame where 2nd half ends (null = auto-detect)
+  
+  # Auto-detection settings
+  auto_detect_halves: true        # Enable automatic half detection
+  detection_method: "activity"    # Detection method: "activity", "kickoff", "vlm", or "hybrid"
+  
+  # Activity-based detection thresholds
+  playing_threshold: 0.65         # Activity score above this = active play
+  break_threshold: 0.3            # Activity score below this = break/halftime
+  min_half_duration: 2400         # Minimum half duration in seconds (40 minutes)
+  max_half_duration: 3000         # Maximum half duration in seconds (50 minutes)
+  
+  # Kickoff detection settings
+  center_circle_radius: 50        # Radius in pixels to consider "at center"
+  formation_threshold: 0.3        # Team separation threshold (% of frame width)
+  
+  # Team configuration
+  team1_defending_side_h1: "left" # Which side Team 1 defends in 1st half ("left" or "right")
+  
+  # State duration requirements
+  min_state_duration: 15          # Minimum seconds to confirm state change
+  min_break_duration: 600         # Minimum halftime duration in seconds (10 minutes)
+
+# === VEO CAMERA SETTINGS ===
+# Veo cameras typically record at 50+ fps and 4K/1080p resolution
+veo_camera:
+  enabled: true                    # Enable Veo camera optimizations
+  auto_detect: true                 # Automatically detect Veo footage (50+ fps)
+  typical_fps: 50                  # Typical Veo camera FPS (adjust if different)
+  high_fps_threshold: 45           # FPS threshold to consider "high FPS" (Veo)
+  
+  # FPS-based threshold adjustments (auto-calculated if auto_detect=true)
+  # These are multipliers applied to frame-based thresholds for high FPS videos
+  fps_adjustment_factor: 1.0       # Auto-calculated: 25fps / actual_fps
+  
+  # Veo-specific optimizations
+  enhanced_ball_tracking: true     # Use enhanced ball tracking for Veo footage
+  optimized_detection_interval: 1  # Process every N frames (1 = all frames for Veo)
+  high_resolution_mode: true       # Enable high-resolution optimizations
+
+# === PERFORMANCE MODE (ACCURACY-PRESERVING FAST PROCESSING) ===
+# Optimized for 2-hour match in <1 hour while maintaining >85% accuracy
+performance:
+  smart_frame_processing: true      # Enable smart optimizations
+  skip_breaks: true                  # Skip frames during breaks/halftime only
+  process_all_active_play: true      # Process EVERY frame during active play (maintains accuracy)
+  
+  # Detection settings (optimized but accurate)
+  player_imgsz: 960                  # Slight reduction (still accurate, faster)
+  ball_imgsz: 640                     # Full resolution (critical for accuracy)
+  pitch_detection_interval: 300      # Only detect pitch when needed (every 10 seconds)
+  
+  # VLM optimizations (maintain accuracy)
+  vlm_selective_mode: true            # Only use VLM when needed (ambiguous cases)
+  vlm_confidence_threshold: 75        # Use VLM for cases with 75-85% confidence
+  vlm_batch_size: 4                   # Process multiple VLM queries together
+  
+  # Skip non-essential outputs (doesn't affect metrics)
+  skip_annotated_video: true          # SKIP VIDEO - Get metrics only (much faster!)
+  skip_html_generation: true          # Generate HTML report later (saves time)
+  skip_debug_logs: true               # Reduce I/O overhead
+
+# === SYSTEM SETTINGS ===
+system:
+  device: "cuda"  # "cuda" or "cpu"
+  single_model_mode: false
+  enable_flash_attention: false
+  
+  # Quantization (for memory efficiency)
+  quantization:
+    load_in_4bit: true
+    compute_dtype: "bfloat16"
+    quant_type: "nf4"
+    use_double_quant: true

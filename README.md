@@ -1,1 +1,0 @@
-# smo-model-niyas

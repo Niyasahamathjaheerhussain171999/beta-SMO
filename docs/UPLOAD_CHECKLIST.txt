@@ -1,0 +1,42 @@
+═══════════════════════════════════════════════════════════════
+  LIGHTNING AI - UPLOAD CHECKLIST
+═══════════════════════════════════════════════════════════════
+
+REQUIRED FILES TO UPLOAD:
+───────────────────────────────────────────────────────────────
+
+✅ MAIN CODE:
+   - main4.py
+   - shot_detection.py
+   - requirements.txt
+   - setup_lightning.sh
+
+✅ YOLO MODELS (in data/ folder):
+   - data/football-player-detection.pt
+   - data/football-ball-detection.pt
+   - data/football-pitch-detection.pt
+
+✅ YOUR VIDEO (in input_video/ folder):
+   - input_video/video_segment (1).mp4
+   (or any other video file)
+
+───────────────────────────────────────────────────────────────
+
+EASIEST WAY:
+───────────────────────────────────────────────────────────────
+
+Upload the ENTIRE "smo-model-niyas" folder to Lightning AI!
+
+This includes everything you need.
+
+───────────────────────────────────────────────────────────────
+
+AFTER UPLOAD, RUN:
+───────────────────────────────────────────────────────────────
+
+bash setup_lightning.sh
+python main4.py --source "input_video/video_segment (1).mp4" --debug
+
+═══════════════════════════════════════════════════════════════
+
+

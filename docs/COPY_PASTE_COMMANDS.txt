@@ -1,0 +1,48 @@
+═══════════════════════════════════════════════════════════════
+  LIGHTNING AI - COPY & PASTE COMMANDS
+═══════════════════════════════════════════════════════════════
+
+STEP 1: SETUP (Run Once - Copy All Below)
+───────────────────────────────────────────────────────────────
+
+bash setup_lightning.sh
+
+───────────────────────────────────────────────────────────────
+Wait for it to finish (2-5 minutes)
+───────────────────────────────────────────────────────────────
+
+
+STEP 2: RUN ANALYSIS (Copy & Paste This)
+───────────────────────────────────────────────────────────────
+
+cd smo-model-niyas
+python main4.py --source "input_video/video_segment (1).mp4" --debug
+
+───────────────────────────────────────────────────────────────
+That's it! Wait for results.
+───────────────────────────────────────────────────────────────
+
+
+OTHER OPTIONS:
+───────────────────────────────────────────────────────────────
+
+# For YouTube video:
+python main4.py --source "https://youtu.be/osoyzB5UR88?si=l9m09maTsbWjOF6y" --debug
+
+# For different video:
+python main4.py --source "input_video/your_video.mp4" --debug
+
+# Without VLM (faster, less accurate):
+python main4.py --source "input_video/video.mp4" --no-vlm
+
+
+RESULTS WILL BE IN:
+───────────────────────────────────────────────────────────────
+- shot_report.json
+- shot_report.csv  
+- scout_report.html
+- annotated_test_video.mp4
+
+═══════════════════════════════════════════════════════════════
+
+
