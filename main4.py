@@ -3914,7 +3914,6 @@ if __name__ == "__main__":
                     res = os.system(f"lightning stop studio --name {studio_name}")
                     if res == 0:
                         logger.info("✅ Shutdown command (lightning) successful")
-                        return
                 
                 # Fallback to direct 'studio stop'
                 res = os.system("studio stop")
