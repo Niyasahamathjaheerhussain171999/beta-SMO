@@ -92,10 +92,11 @@ except ImportError:
 
 # --- 1. CONFIG ---
 DATA_DIR = 'data'
+MODEL_DIR = os.path.join(DATA_DIR, 'input')  # Models are in data/input/
 # All 3 YOLO models for Lightning AI
-PLAYER_MODEL = os.path.join(DATA_DIR, 'football-player-detection.pt')
-BALL_MODEL = os.path.join(DATA_DIR, 'football-ball-detection.pt')
-PITCH_MODEL = os.path.join(DATA_DIR, 'football-pitch-detection.pt')
+PLAYER_MODEL = os.path.join(MODEL_DIR, 'football-player-detection.pt')
+BALL_MODEL = os.path.join(MODEL_DIR, 'football-ball-detection.pt')
+PITCH_MODEL = os.path.join(MODEL_DIR, 'football-pitch-detection.pt')
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # API Configuration

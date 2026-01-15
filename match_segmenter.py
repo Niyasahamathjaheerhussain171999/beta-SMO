@@ -702,7 +702,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Match Segmenter - Fast Video Scan")
     parser.add_argument("--video", type=str, required=True, help="Path to video file")
-    parser.add_argument("--model", type=str, default="data/football-player-detection.pt", 
+    parser.add_argument("--model", type=str, default="data/input/football-player-detection.pt", 
                        help="Path to YOLO model")
     args = parser.parse_args()
     
