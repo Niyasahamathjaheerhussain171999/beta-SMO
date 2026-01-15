@@ -33,7 +33,7 @@ SHOT_COLORS = {
 
 
 def generate_full_scout_report_html(pass_events, shot_events, video_path, 
-                                     annotated_video_path, pass_stats, shot_stats, fps):
+                                     annotated_video_path, pass_stats, shot_stats, fps, mvp_results=None):
     """
     Generate comprehensive HTML Scout Match Report with:
     - Pass Analysis
@@ -48,10 +48,28 @@ def generate_full_scout_report_html(pass_events, shot_events, video_path,
     # Calculate totals
     total_passes = len(pass_events)
     total_shots = len(shot_events)
-    blue_passes = sum(1 for p in pass_events if p.get('from_team') == 'Blue')
-    red_passes = sum(1 for p in pass_events if p.get('from_team') == 'Red')
-    blue_shots = sum(1 for s in shot_events if s.get('team') == 'Blue')
-    red_shots = sum(1 for s in shot_events if s.get('team') == 'Red')
+    
+    # Team Names and Data Extraction
+    h_stats = mvp_results.get("statistics", {}) if mvp_results else {}
+    full_match_stats = h_stats.get("full_match", {})
+    
+    # Try to find team names from stats if not directly available
+    team_names = list(full_match_stats.keys())
+    team_a_name = team_names[0] if len(team_names) > 0 else "Team A"
+    team_b_name = team_names[1] if len(team_names) > 1 else "Team B"
+    
+    # Stats for Overview
+    t1_stats = full_match_stats.get(team_a_name, {})
+    t2_stats = full_match_stats.get(team_b_name, {})
+    
+    team_a_goals = t1_stats.get("goals", sum(1 for s in shot_events if s.get('team') == team_a_name and s.get('shot_type') == 'Goal'))
+    team_b_goals = t2_stats.get("goals", sum(1 for s in shot_events if s.get('team') == team_b_name and s.get('shot_type') == 'Goal'))
+    
+    team_a_possession = t1_stats.get("possession", 50)
+    team_b_possession = t2_stats.get("possession", 50)
+    
+    team_a_passes = sum(1 for p in pass_events if p.get('from_team') == team_a_name)
+    team_b_passes = sum(1 for p in pass_events if p.get('from_team') == team_b_name)
     
     # Pass type counts
     pass_type_counts = {}
@@ -67,6 +85,13 @@ def generate_full_scout_report_html(pass_events, shot_events, video_path,
     
     # Generate timeline markers for JavaScript
     markers_js = generate_markers_js(pass_events, shot_events, fps)
+    
+    # Extract Half Stats
+    h1 = h_stats.get("first_half", {"team_a": {}, "team_b": {}, "context": "No data available"})
+    h2 = h_stats.get("second_half", {"team_a": {}, "team_b": {}, "context": "No data available"})
+    timestamps = mvp_results.get("half_timestamps", {}) if mvp_results else {}
+    h1_range = f"{timestamps.get('h1_start', {}).get('time', '00:00')} – {timestamps.get('h1_end', {}).get('time', '45:00')}"
+    h2_range = f"{timestamps.get('h2_start', {}).get('time', '45:00')} – {timestamps.get('h2_end', {}).get('time', '90:00')}"
     
     # Generate HTML
     html_content = f'''<!DOCTYPE html>
@@ -710,6 +735,245 @@ def generate_full_scout_report_html(pass_events, shot_events, video_path,
             color: #8b5cf6;
             text-decoration: none;
         }}
+
+        /* === TALE OF TWO HALVES === */
+        .halves-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }}
+        
+        .half-card {{
+            background: linear-gradient(rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.96)), 
+                        radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.1) 0%, transparent 80%);
+            border-radius: 20px;
+            padding: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+            position: relative;
+            overflow: hidden;
+        }}
+        
+        .half-card::before {{
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: url("data:image/svg+xml,%3Csvg width='400' height='200' viewBox='0 0 400 200' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M200 0V200M0 100H400M200 100C200 111.046 191.046 120 180 120C168.954 120 160 111.046 160 100C160 88.9543 168.954 80 180 80C191.046 80 200 88.9543 200 100Z' stroke='rgba(255,255,255,0.03)' stroke-width='2'/%3E%3C/svg%3E");
+            background-size: cover;
+            opacity: 0.5;
+            pointer-events: none;
+        }}
+        
+        .half-header {{
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 25px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }}
+        
+        .half-title {{
+            font-size: 28px;
+            font-weight: 900;
+            color: #fbbf24;
+            letter-spacing: 2.5px;
+            text-transform: uppercase;
+        }}
+        
+        .half-context {{
+            font-size: 14px;
+            color: #94a3b8;
+            margin-top: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }}
+
+        .orientation-row {{
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 15px;
+        }}
+
+        .orientation-badge {{
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #1e293b;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }}
+
+        .orientation-badge.attack {{ color: #10b981; }} /* Green */
+        .orientation-badge.defend {{ color: #f43f5e; }} /* Rose/Red */
+        
+        .team-indicator {{
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #f8fafc;
+        }}
+        
+        .comparison-row {{
+            display: grid;
+            grid-template-columns: 1fr 2fr 1fr;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }}
+        
+        .comparison-row:last-child {{ border: none; }}
+        
+        .comp-val {{
+            font-size: 26px;
+            font-weight: 900;
+            text-align: center;
+        }}
+        
+        .comp-val.team-a {{ color: #3b82f6; text-shadow: 0 0 10px rgba(59, 130, 246, 0.2); }}
+        .comp-val.team-b {{ color: #ef4444; text-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }}
+        
+        .comp-metric {{
+            text-align: center;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 2.5px;
+            color: #64748b;
+        }}
+        
+        .half_insight {{
+            margin-top: 25px;
+            padding: 20px;
+            background: rgba(99, 102, 241, 0.1);
+            border-left: 4px solid #6366f1;
+            border-radius: 0 12px 12px 0;
+            font-style: italic;
+            font-size: 15px;
+            line-height: 1.6;
+            color: #cbd5e1;
+        }}
+
+        /* === TV MATCH SUMMARY CARD === */
+        .tv-card-container {{
+            margin-bottom: 40px;
+            display: flex;
+            justify-content: center;
+        }}
+
+        .tv-card {{
+            background: #0f172a;
+            width: 100%;
+            max-width: 800px;
+            border-radius: 12px;
+            border: 2px solid #1e293b;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            font-family: 'Inter', system-ui, sans-serif;
+        }}
+
+        .tv-card-header {{
+            background: #1e293b;
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #334155;
+        }}
+
+        .tv-main-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 30px 40px;
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+        }}
+
+        .tv-team-name {{
+            font-size: 24px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            width: 40%;
+        }}
+
+        .tv-team-name.left {{ text-align: right; color: #3b82f6; }}
+        .tv-team-name.right {{ text-align: left; color: #ef4444; }}
+
+        .tv-score-box {{
+            font-size: 48px;
+            font-weight: 900;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            text-shadow: 0 0 20px rgba(255,255,255,0.2);
+        }}
+
+        .tv-score-divider {{
+            opacity: 0.5;
+            font-weight: 300;
+        }}
+
+        .tv-dominance-section {{
+            background: #0f172a;
+            padding: 20px 40px 30px;
+            text-align: center;
+        }}
+
+        .tv-dominance-title {{
+            font-size: 12px;
+            font-weight: 800;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 15px;
+        }}
+
+        .tv-dominance-bar-container {{
+            height: 35px;
+            background: #1e293b;
+            border-radius: 4px;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }}
+
+        .tv-bar {{
+            height: 100%;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            font-weight: 800;
+            font-size: 14px;
+            transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }}
+
+        .tv-bar.team-a {{
+            background: #2563eb;
+            color: white;
+            justify-content: flex-start;
+        }}
+
+        .tv-bar.team-b {{
+            background: #dc2626;
+            color: white;
+            justify-content: flex-end;
+        }}
+
+        .tv-possession-label {{
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
     </style>
 </head>
 <body>
@@ -728,31 +992,86 @@ def generate_full_scout_report_html(pass_events, shot_events, video_path,
     <div class="container">
         <!-- TAB NAVIGATION -->
         <div class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('passes')">
-                🎯 Pass Analysis <span style="opacity:0.7">({total_passes})</span>
+            <button class="tab-btn active" onclick="switchTab('overview')">
+                📊 Overview
+            </button>
+            <button class="tab-btn" onclick="switchTab('passes')">
+                🎯 Passes ({total_passes})
             </button>
             <button class="tab-btn" onclick="switchTab('shots')">
-                ⚽ Shot Analysis <span style="opacity:0.7">({total_shots})</span>
+                ⚽ Shots ({total_shots})
+            </button>
+            <button class="tab-btn" onclick="switchTab('halves')">
+                ⏱️ Halves
             </button>
             <button class="tab-btn" onclick="switchTab('video')">
-                🎬 Full Video
+                🎬 Video
             </button>
+        </div>
+
+        <!-- OVERVIEW TAB -->
+        <div class="tab-content active" id="overview-tab">
+            <div class="tv-card-container">
+                <div class="tv-card">
+                    <div class="tv-card-header">1. Match Summary Card (TV Standard)</div>
+                    <div class="tv-main-row">
+                        <div class="tv-team-name left">TEAM {team_a_name.upper()}</div>
+                        <div class="tv-score-box">
+                            <span>{team_a_goals}</span>
+                            <span class="tv-score-divider">-</span>
+                            <span>{team_b_goals}</span>
+                        </div>
+                        <div class="tv-team-name right">TEAM {team_b_name.upper()}</div>
+                    </div>
+                    <div class="tv-dominance-section">
+                        <div class="tv-dominance-title">DOMINANCE BAR</div>
+                        <div class="tv-dominance-bar-container">
+                            <div class="tv-bar team-a" style="width: {team_a_possession}%">
+                                <span class="tv-possession-label">{team_a_possession}% POSSESSION</span>
+                            </div>
+                            <div class="tv-bar team-b" style="width: {team_b_possession}%">
+                                <span class="tv-possession-label">{team_b_possession}%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Global Stats Below TV Card -->
+            <div class="summary-cards" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                <div class="card total">
+                    <div class="card-value">{total_passes}</div>
+                    <div class="card-label">Total Passes</div>
+                </div>
+                <div class="card success">
+                    <div class="card-value">{sum(1 for p in pass_events if p.get('result') == 'Success')}</div>
+                    <div class="card-label">Pass Success</div>
+                </div>
+                <div class="card blue">
+                    <div class="card-value">{team_a_passes}</div>
+                    <div class="card-label">{team_a_name} Passes</div>
+                </div>
+                <div class="card red">
+                    <div class="card-value">{team_b_passes}</div>
+                    <div class="card-label">{team_b_name} Passes</div>
+                </div>
+            </div>
         </div>
         
         <!-- PASS ANALYSIS TAB -->
-        <div class="tab-content active" id="passes-tab">
+        <div class="tab-content" id="passes-tab">
             <div class="summary-cards">
                 <div class="card total">
                     <div class="card-value">{total_passes}</div>
                     <div class="card-label">Total Passes</div>
                 </div>
                 <div class="card blue">
-                    <div class="card-value">{blue_passes}</div>
-                    <div class="card-label">Blue Team</div>
+                    <div class="card-value">{team_a_passes}</div>
+                    <div class="card-label">{team_a_name}</div>
                 </div>
                 <div class="card red">
-                    <div class="card-value">{red_passes}</div>
-                    <div class="card-label">Red Team</div>
+                    <div class="card-value">{team_b_passes}</div>
+                    <div class="card-label">{team_b_name}</div>
                 </div>
                 <div class="card success">
                     <div class="card-value">{sum(1 for p in pass_events if p.get('result') == 'Success')}</div>
@@ -888,6 +1207,153 @@ def generate_full_scout_report_html(pass_events, shot_events, video_path,
     
     html_content += f'''                        </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- TALE OF TWO HALVES TAB -->
+        <div class="tab-content" id="halves-tab">
+            <div class="halves-grid">
+                <!-- FIRST HALF -->
+                <div class="half-card">
+                    <div class="half-header">
+                        <div class="half-title">First Half</div>
+                        <div class="half-context">{h1_range}</div>
+                        
+                        <div style="margin-top:20px;">
+                            <div class="team-indicator" style="color:#3b82f6;">{team_a_name.upper()}</div>
+                            <div class="orientation-row">
+                                <div class="orientation-badge attack" style="border-color: rgba(59, 130, 246, 0.4);">
+                                    <span>⚔️ Attacking</span>
+                                    <span>{'➡' if 'left_to_right' in str(h1.get('team_a', {}).get('attacking_direction')).lower() else '⬅'}</span>
+                                </div>
+                                <div class="orientation-badge defend" style="border-color: rgba(59, 130, 246, 0.4);">
+                                    <span>🛡️ Defending</span>
+                                    <span>{'⬅' if 'left_to_right' in str(h1.get('team_a', {}).get('attacking_direction')).lower() else '➡'}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top:20px;">
+                            <div class="team-indicator" style="color:#ef4444;">{team_b_name.upper()}</div>
+                            <div class="orientation-row">
+                                <div class="orientation-badge attack" style="border-color: rgba(239, 68, 68, 0.4);">
+                                    <span>⚔️ Attacking</span>
+                                    <span>{'➡' if 'left_to_right' in str(h1.get('team_b', {}).get('attacking_direction')).lower() else '⬅'}</span>
+                                </div>
+                                <div class="orientation-badge defend" style="border-color: rgba(239, 68, 68, 0.4);">
+                                    <span>🛡️ Defending</span>
+                                    <span>{'⬅' if 'left_to_right' in str(h1.get('team_b', {}).get('attacking_direction')).lower() else '➡'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h1.get('team_a', {}).get('goals', 0)}</div>
+                        <div class="comp-metric">Goals</div>
+                        <div class="comp-val team-b">{h1.get('team_b', {}).get('goals', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h1.get('team_a', {}).get('shots_on_target', 0)}</div>
+                        <div class="comp-metric">Shots on Target</div>
+                        <div class="comp-val team-b">{h1.get('team_b', {}).get('shots_on_target', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h1.get('team_a', {}).get('shots_off_target', 0)}</div>
+                        <div class="comp-metric">Shots off Target</div>
+                        <div class="comp-val team-b">{h1.get('team_b', {}).get('shots_off_target', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h1.get('team_a', {}).get('short_passes', 0)}</div>
+                        <div class="comp-metric">Short Passes</div>
+                        <div class="comp-val team-b">{h1.get('team_b', {}).get('short_passes', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h1.get('team_a', {}).get('long_balls', 0)}</div>
+                        <div class="comp-metric">Long Balls</div>
+                        <div class="comp-val team-b">{h1.get('team_b', {}).get('long_balls', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h1.get('team_a', {}).get('total_passes', 0)}</div>
+                        <div class="comp-metric">Total Passes</div>
+                        <div class="comp-val team-b">{h1.get('team_b', {}).get('total_passes', 0)}</div>
+                    </div>
+                    
+                    <div class="half-insight">
+                        "The first half analytics show {team_a_name if h1.get('team_a', {}).get('total_passes', 0) > h1.get('team_b', {}).get('total_passes', 0) else team_b_name} Team focusing on possession, with {h1.get('team_a', {}).get('long_balls', 0) if h1.get('team_a', {}).get('long_balls', 0) > h1.get('team_b', {}).get('long_balls', 0) else h1.get('team_b', {}).get('long_balls', 0)} long balls attempted to stretch the defense."
+                    </div>
+                </div>
+
+                <!-- SECOND HALF -->
+                <div class="half-card">
+                    <div class="half-header">
+                        <div class="half-title">Second Half</div>
+                        <div class="half-context">{h2_range}</div>
+                        
+                        <div style="margin-top:20px;">
+                            <div class="team-indicator" style="color:#3b82f6;">{team_a_name.upper()}</div>
+                            <div class="orientation-row">
+                                <div class="orientation-badge attack" style="border-color: rgba(59, 130, 246, 0.4);">
+                                    <span>⚔️ Attacking</span>
+                                    <span>{'➡' if 'left_to_right' in str(h2.get('team_a', {}).get('attacking_direction')).lower() else '⬅'}</span>
+                                </div>
+                                <div class="orientation-badge defend" style="border-color: rgba(59, 130, 246, 0.4);">
+                                    <span>🛡️ Defending</span>
+                                    <span>{'⬅' if 'left_to_right' in str(h2.get('team_a', {}).get('attacking_direction')).lower() else '➡'}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top:20px;">
+                            <div class="team-indicator" style="color:#ef4444;">{team_b_name.upper()}</div>
+                            <div class="orientation-row">
+                                <div class="orientation-badge attack" style="border-color: rgba(239, 68, 68, 0.4);">
+                                    <span>⚔️ Attacking</span>
+                                    <span>{'➡' if 'left_to_right' in str(h2.get('team_b', {}).get('attacking_direction')).lower() else '⬅'}</span>
+                                </div>
+                                <div class="orientation-badge defend" style="border-color: rgba(239, 68, 68, 0.4);">
+                                    <span>🛡️ Defending</span>
+                                    <span>{'⬅' if 'left_to_right' in str(h2.get('team_b', {}).get('attacking_direction')).lower() else '➡'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h2.get('team_a', {}).get('goals', 0)}</div>
+                        <div class="comp-metric">Goals</div>
+                        <div class="comp-val team-b">{h2.get('team_b', {}).get('goals', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h2.get('team_a', {}).get('shots_on_target', 0)}</div>
+                        <div class="comp-metric">Shots on Target</div>
+                        <div class="comp-val team-b">{h2.get('team_b', {}).get('shots_on_target', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h2.get('team_a', {}).get('shots_off_target', 0)}</div>
+                        <div class="comp-metric">Shots off Target</div>
+                        <div class="comp-val team-b">{h2.get('team_b', {}).get('shots_off_target', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h2.get('team_a', {}).get('short_passes', 0)}</div>
+                        <div class="comp-metric">Short Passes</div>
+                        <div class="comp-val team-b">{h2.get('team_b', {}).get('short_passes', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h2.get('team_a', {}).get('long_balls', 0)}</div>
+                        <div class="comp-metric">Long Balls</div>
+                        <div class="comp-val team-b">{h2.get('team_b', {}).get('long_balls', 0)}</div>
+                    </div>
+                    <div class="comparison-row">
+                        <div class="comp-val team-a">{h2.get('team_a', {}).get('total_passes', 0)}</div>
+                        <div class="comp-metric">Total Passes</div>
+                        <div class="comp-val team-b">{h2.get('team_b', {}).get('total_passes', 0)}</div>
+                    </div>
+                    
+                    <div class="half-insight">
+                        "The match intensity shifted in the second half. {team_a_name if h2.get('team_a', {}).get('goals', 0) > h1.get('team_a', {}).get('goals', 0) else team_b_name} Team increased their attacking efficiency, aiming to capitalize on transition moments."
+                    </div>
                 </div>
             </div>
         </div>

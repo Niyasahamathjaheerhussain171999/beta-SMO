@@ -43,12 +43,12 @@ from collections import deque
 SHOT_PROXIMITY_THRESHOLD = 100         # Ball near player for potential shot (pixels)
                                        # Used to find closest player to ball. Not a strict filter.
 
-SHOT_VELOCITY_THRESHOLD = 15           # INCREASED: Minimum ball speed to consider a shot (pixels per frame)
-                                       # At 25 FPS: 15 px/frame = 375 px/second
-                                       # At 54 FPS: 15 px/frame = 810 px/second
-                                       # INCREASED to filter out slow "lofted" passes on small pitches
-                                       # Amateur passes are slow, amateur shots are fast - gap is wider
-                                       # RECOMMENDED: 12-18 for amateur/semi-pro pitches
+SHOT_VELOCITY_THRESHOLD = 8            # Minimum ball speed to consider a shot (pixels per frame)
+                                       # At 25 FPS: 8 px/frame = 200 px/second
+                                       # At 54 FPS: 8 px/frame = 432 px/second
+                                       # Lower = catches slower shots, but may detect passes
+                                       # Higher = only fast shots, may miss slow shots
+                                       # RECOMMENDED RANGE: 5-12
 
 GOAL_ZONE_MARGIN = 0.25                # 25% from each end of frame = goal areas
                                        # Used to define where goals are located (left/right 25% of frame)
@@ -71,17 +71,12 @@ SHOT_CONFIDENCE_THRESHOLD = 65         # INCREASED for 80%+ accuracy: Minimum VL
                                        # RECOMMENDED RANGE: 60-70 for 80%+ accuracy
 
 # === REFINED DETECTION PARAMETERS ===
-# RELATIVE SCALING: Use % of pitch instead of hardcoded meters (fixes small pitch issue)
-GOAL_PROXIMITY_RADIUS_METERS = 35      # Maximum distance from goal (meters) - REDUCED for small pitches
-                                       # On small pitches (60-80m), 120m is entire field = false positives
-                                       # 35m = final 30-40% of small pitch, final 25% of standard pitch
-                                       # This filters out long passes while catching real shots
-GOAL_PROXIMITY_RADIUS_PERCENT = 0.30  # NEW: Relative threshold (30% of pitch length from goal)
-                                       # Automatically scales for any pitch size
-                                       # 30% = danger zone (penalty area + edge of box)
-MAX_SHOT_ANGLE_DEGREES = 45           # NEW: Maximum angle deviation (tightened from 60°)
-                                       # Filters out crosses that look like shots on narrow fields
-                                       # 45° = central shooting cone only
+GOAL_PROXIMITY_RADIUS_METERS = 120     # Maximum distance from goal to consider shot (meters)
+                                       # Standard pitch length: ~105 meters
+                                       # 120m covers entire pitch + margin
+                                       # Lower = only close shots (may miss long-range shots)
+                                       # Higher = catches shots from further (may detect long passes)
+                                       # RECOMMENDED RANGE: 100-150
 
 GOAL_WIDTH_METERS = 7.32               # Standard FIFA goal width (meters)
                                        # Used for goal frame calibration
@@ -129,7 +124,6 @@ class ShotDetector:
         # Goal calibration (static goal coordinates)
         self.goal_coordinates = None  # Will store: {'left_goal': (x, y, width, height), 'right_goal': (x, y, width, height)}
         self.pixels_per_meter = None  # Calibration factor
-        self.actual_pitch_length_meters = 105  # Detected pitch length (default: standard 105m)
         
         # Goal zones (left and right ends of pitch)
         self._setup_goal_zones()
@@ -171,40 +165,19 @@ class ShotDetector:
             self.left_goal_zone = (left, left + width * GOAL_ZONE_MARGIN)
             self.right_goal_zone = (right - width * GOAL_ZONE_MARGIN, right)
             
-            # DYNAMIC PITCH LENGTH DETECTION (fixes small pitch issue)
-            # Detect actual pitch length from bounds instead of assuming 105m
-            pitch_height = pitch_bounds.get('pitch_height', 0)
-            if pitch_height > 0:
-                # Use pitch height as proxy for pitch size (more reliable than width)
-                # Standard pitch: 105m x 68m, so height/width ratio ≈ 0.65
-                # Small pitch: 60m x 40m, so height/width ratio ≈ 0.67
-                # Estimate pitch length from detected dimensions
-                estimated_pitch_length_meters = max(60, min(105, width * 0.65))  # Clamp 60-105m
-                if width > 0:
-                    self.pixels_per_meter = width / estimated_pitch_length_meters
-                    self.actual_pitch_length_meters = estimated_pitch_length_meters
-                else:
-                    self.pixels_per_meter = 1
-                    self.actual_pitch_length_meters = 105
-            else:
-                # Fallback: assume standard pitch
-                pitch_length_meters = 105
-                if width > 0:
-                    self.pixels_per_meter = width / pitch_length_meters
-                    self.actual_pitch_length_meters = pitch_length_meters
-                else:
-                    self.pixels_per_meter = 1
-                    self.actual_pitch_length_meters = 105
+            # Estimate pixels per meter (standard pitch is ~105m long)
+            pitch_length_meters = 105
+            if width > 0:
+                self.pixels_per_meter = width / pitch_length_meters
         else:
             # Use frame-based detection
             margin = self.frame_width * GOAL_ZONE_MARGIN
             self.left_goal_zone = (0, margin)
             self.right_goal_zone = (self.frame_width - margin, self.frame_width)
             
-            # Fallback: assume standard pitch fits in frame
+            # Rough estimate: assume standard pitch fits in frame
             pitch_length_meters = 105
             self.pixels_per_meter = self.frame_width / pitch_length_meters if self.frame_width > 0 else 1
-            self.actual_pitch_length_meters = pitch_length_meters
     
     def update_pitch_bounds(self, pitch_bounds):
         """Update goal zones when pitch bounds are detected"""
@@ -440,11 +413,10 @@ class ShotDetector:
         angle_rad = np.arccos(np.clip(np.dot(velocity_unit, to_goal_unit), -1, 1))
         angle_degrees = np.degrees(angle_rad)
         
-        # TIGHTENED CHECK: Angle must be less than MAX_SHOT_ANGLE_DEGREES (45°)
-        # On small pitches, crosses from wing look dangerous because winger is closer
-        # Tightening to 45° filters out wide crosses, only allows central shots
-        if angle_degrees > MAX_SHOT_ANGLE_DEGREES:
-            intersects = False  # Too wide - likely a cross or square pass, not a shot
+        # EXTREMELY RELAXED CHECK: Angle must be less than 150 degrees (was 135)
+        # This acts as a coarse filter to let almost anything moving forward go to the AI.
+        if angle_degrees > 150:
+            intersects = False  # Too wide - likely a cross or square pass backwards
         
         return intersects, angle_degrees
     
@@ -598,20 +570,14 @@ class ShotDetector:
                 print(f"  [Shot Filter] Frame {frame_idx}: NOT in shooting range | pos=({shooter_pos[0]:.0f}, {shooter_pos[1]:.0f}) | speed={speed:.1f} | dist={distance_to_goal:.1f}m")
             return False, None, 0, None
         
-        # FILTER 3: Ball must be within goal proximity radius (RELATIVE SCALING)
+        # FILTER 3: Ball must be within goal proximity radius
         # Purpose: Only consider shots from reasonable distance
-        # FIXED: Use relative scaling (% of pitch) instead of hardcoded meters
-        # This automatically adapts to small pitches (60-80m) vs standard (105m)
-        actual_pitch_length = getattr(self, 'actual_pitch_length_meters', 105)
-        
-        # Use relative threshold: 30% of pitch length from goal (danger zone)
-        relative_threshold_meters = actual_pitch_length * GOAL_PROXIMITY_RADIUS_PERCENT
-        # Also apply absolute maximum (35m) to prevent false positives on very small pitches
-        max_distance_threshold = min(GOAL_PROXIMITY_RADIUS_METERS, relative_threshold_meters)
-        
-        if distance_to_goal > max_distance_threshold:
+        # Threshold: GOAL_PROXIMITY_RADIUS_METERS = 120 meters
+        # Standard pitch: ~105m long, so 120m covers entire pitch + margin
+        # If distance > 120m, reject (too far from goal, likely a long pass)
+        if distance_to_goal > GOAL_PROXIMITY_RADIUS_METERS:
             if debug_log:
-                print(f"  [Shot Filter] Frame {frame_idx}: TOO FAR from goal | dist={distance_to_goal:.1f}m > {max_distance_threshold:.1f}m (pitch={actual_pitch_length}m, {GOAL_PROXIMITY_RADIUS_PERCENT*100:.0f}%) | speed={speed:.1f}")
+                print(f"  [Shot Filter] Frame {frame_idx}: TOO FAR from goal | dist={distance_to_goal:.1f}m > {GOAL_PROXIMITY_RADIUS_METERS}m | speed={speed:.1f}")
             return False, None, 0, None
         
         # FILTER 4: Velocity Vector Check - Ball trajectory must intersect goal area

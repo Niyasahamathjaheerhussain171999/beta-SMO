@@ -13,6 +13,10 @@ from collections import deque
 import requests
 import logging
 from typing import Dict, Any, Optional
+import yaml
+import shutil
+import tempfile
+from datetime import datetime
 
 # Optional import for YouTube downloads (only needed if using YouTube URLs)
 try:
@@ -46,6 +50,45 @@ except ImportError:
         generate_full_scout_report_html = None
         print("⚠️  Warning: shot_report_generator/scout_report_generator module not found. HTML reports will not include shots.")
 
+# === MVP MODULES FOR CEO REQUIREMENTS ===
+# Import new modules for enhanced analysis
+try:
+    from half_detector import HalfDetector
+    HALF_DETECTOR_AVAILABLE = True
+    print("✅ Half Detector module loaded")
+except ImportError:
+    HALF_DETECTOR_AVAILABLE = False
+    HalfDetector = None
+    print("⚠️  Warning: half_detector module not found. Half detection will be disabled.")
+
+try:
+    from team_direction import TeamDirectionDetector
+    TEAM_DIRECTION_AVAILABLE = True
+    print("✅ Team Direction Detector module loaded")
+except ImportError:
+    TEAM_DIRECTION_AVAILABLE = False
+    TeamDirectionDetector = None
+    print("⚠️  Warning: team_direction module not found. Team direction detection will be disabled.")
+
+try:
+    from gk_save_detector import GKSaveDetector
+    GK_SAVE_AVAILABLE = True
+    print("✅ GK Save Detector module loaded")
+except ImportError:
+    GK_SAVE_AVAILABLE = False
+    GKSaveDetector = None
+    print("⚠️  Warning: gk_save_detector module not found. GK save detection will be disabled.")
+
+try:
+    from video_enhancer import VeoOptimizer, enhance_for_analysis
+    VIDEO_ENHANCER_AVAILABLE = True
+    print("✅ Video Enhancer module loaded")
+except ImportError:
+    VIDEO_ENHANCER_AVAILABLE = False
+    VeoOptimizer = None
+    enhance_for_analysis = None
+    print("⚠️  Warning: video_enhancer module not found. Video enhancement will be disabled.")
+
 
 # --- 1. CONFIG ---
 DATA_DIR = 'data'
@@ -61,7 +104,15 @@ API_KEY = "sk_smo_9f3cA1b8E2D4F6a9B7C0XyZQmPkyam"
 INPUT_VIDEO_DIR = 'input_video'
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log_filename = f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_filename),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Single model mode OFF - using separate models
@@ -107,6 +158,42 @@ USE_VLM_STAGE1 = True              # Stage 1: STRICT pass verification
 USE_VLM_STAGE2 = True              # Stage 2: Final type classification
 VLM_CROP_SIZE = 450                # Larger crop for better context
 VLM_IS_PRIMARY = True              # VLM decision overrides geometry when confident
+
+# --- 1.2 LOAD YAML CONFIG (Override Hardcoded Defaults) ---
+cfg = {}
+config_path = 'config.yaml'
+if os.path.exists(config_path):
+    try:
+        with open(config_path, 'r') as f:
+            cfg = yaml.safe_load(f)
+            print(f"✅ Configuration loaded from {config_path}")
+            
+            # Application of overrides
+            if 'match_context' in cfg:
+                mc = cfg['match_context']
+                TEAM_A_NAME = mc.get('team_a_name', TEAM_A_NAME)
+                TEAM_B_NAME = mc.get('team_b_name', TEAM_B_NAME)
+            
+            if 'detection' in cfg:
+                d = cfg['detection']
+                BALL_PROXIMITY_THRESHOLD = d.get('ball_proximity_px', BALL_PROXIMITY_THRESHOLD)
+                EVENT_COOLDOWN_FRAMES = d.get('event_cooldown_frames', EVENT_COOLDOWN_FRAMES)
+                MIN_PASS_DISTANCE = d.get('min_pass_distance_px', MIN_PASS_DISTANCE)
+                MIN_OWNERSHIP_FRAMES = d.get('min_ownership_frames', MIN_OWNERSHIP_FRAMES)
+                CONFIDENCE_THRESHOLD = d.get('confidence_threshold', CONFIDENCE_THRESHOLD)
+                TEMPORAL_BUFFER_SIZE = d.get('temporal_buffer_size', TEMPORAL_BUFFER_SIZE)
+            
+            if 'pipeline' in cfg:
+                p = cfg['pipeline']
+                INPUT_VIDEO_DIR = p.get('input_video_dir', INPUT_VIDEO_DIR)
+                SAVE_ANNOTATED_VIDEO = p.get('save_annotated_video', SAVE_ANNOTATED_VIDEO)
+                BASE_URL = p.get('api_url', BASE_URL)
+                API_KEY = p.get('api_key', API_KEY)
+                
+    except Exception as e:
+        print(f"⚠️  Error loading {config_path}: {e}")
+else:
+    print(f"ℹ️  No {config_path} found, using hardcoded defaults")
 
 
 # --- 1.5 GLOBAL QUANTIZATION CONFIG (To avoid OOM on A100 40GB) ---
@@ -981,11 +1068,54 @@ def detect_pitch_boundaries(pitch_model, frame):
 
 
 # --- MAIN ENGINE ---
-def run_analysis(video_path, use_vlm=True, debug=False):
+def run_analysis(video_path, use_vlm=True, debug=False, frame_boundaries=None, attack_directions=None):
+    """
+    Main analysis engine for video processing.
+    
+    Args:
+        video_path: Path to video file
+        use_vlm: Enable VLM verification
+        debug: Enable debug logging
+        frame_boundaries: Optional dict from MatchSegmenter with frame ranges to process
+                         {"h1": {"start": N, "end": M}, "h2": {"start": X, "end": Y}}
+        attack_directions: Optional dict with pre-computed team directions
+                          {"first_half": {"team_a": "right", "team_b": "left"}, ...}
+    """
     v_info = sv.VideoInfo.from_video_path(video_path)
     frame_width = v_info.width
     frame_height = v_info.height
     fps = v_info.fps
+    
+    # === SMART SEGMENTATION: Determine which frames to process ===
+    start_frame = 0
+    end_frame = v_info.total_frames
+    skip_halftime = False
+    halftime_start = None
+    halftime_end = None
+    
+    if frame_boundaries:
+        h1 = frame_boundaries.get('h1')
+        h2 = frame_boundaries.get('h2')
+        
+        if h1:
+            start_frame = h1['start']
+            if h2:
+                # We have both halves - skip halftime
+                halftime_start = h1['end']
+                halftime_end = h2['start']
+                end_frame = h2['end']
+                skip_halftime = True
+                print(f"📋 Smart Processing Mode:")
+                print(f"   H1: Frames {start_frame:,} - {halftime_start:,}")
+                print(f"   Halftime Skip: Frames {halftime_start:,} - {halftime_end:,}")
+                print(f"   H2: Frames {halftime_end:,} - {end_frame:,}")
+            else:
+                end_frame = h1['end']
+                print(f"📋 Smart Processing Mode:")
+                print(f"   Processing: Frames {start_frame:,} - {end_frame:,}")
+    
+    # Pre-set attack directions if provided
+    precomputed_directions = attack_directions
     
     print()
     print("=" * 70)
@@ -1056,7 +1186,18 @@ def run_analysis(video_path, use_vlm=True, debug=False):
         except Exception as e:
             print(f"⚠️  Shot Detector initialization failed: {e}")
             shot_detector = None
-    
+            
+    # === Initialize MVP Analyzer (Enhanced Match Context) ===
+    mvp_analyzer = None
+    try:
+        from mvp_integration import MVPAnalyzer
+        mvp_analyzer = MVPAnalyzer(video_path, vlm_query, qwen_video_query, TEAM_A_NAME, TEAM_B_NAME)
+        mvp_analyzer.initialize_modules(frame_width, frame_height, fps, v_info.total_frames)
+        print("✅ MVP Match Context Analyzer initialized")
+    except Exception as e:
+        print(f"⚠️  MVP Analyzer initialization failed: {e}")
+        mvp_analyzer = None
+
     tracker = sv.ByteTrack()
     
     # === Initialize tracking state ===
@@ -1064,6 +1205,7 @@ def run_analysis(video_path, use_vlm=True, debug=False):
     player_teams = {}
     player_positions = {}
     player_bboxes = {}
+    player_labels = {}  # Added: store class IDs for better GK identification
     current_owner = None
     ownership_start_frame = 0
     last_event_frame = -100
@@ -1128,7 +1270,49 @@ def run_analysis(video_path, use_vlm=True, debug=False):
     recent_passes = []
     PASS_DISPLAY_DURATION = 60
     
-    for f_idx, frame in enumerate(tqdm(sv.get_video_frames_generator(video_path), total=v_info.total_frames)):
+    # === SMART SEGMENTATION: Track frames to process ===
+    frames_processed = 0
+    frames_skipped = 0
+    current_half = "first_half"
+    
+    # Calculate total frames to process for progress bar
+    if frame_boundaries:
+        total_to_process = frame_boundaries.get('total_frames_to_process', v_info.total_frames)
+    else:
+        total_to_process = v_info.total_frames
+    
+    progress_bar = tqdm(total=total_to_process, desc="Processing")
+    
+    for f_idx, frame in enumerate(sv.get_video_frames_generator(video_path)):
+        
+        # === SMART SEGMENTATION: Skip frames outside boundaries ===
+        if frame_boundaries:
+            # Skip warmup (before match start)
+            if f_idx < start_frame:
+                frames_skipped += 1
+                continue
+            
+            # Skip halftime
+            if skip_halftime and halftime_start <= f_idx < halftime_end:
+                frames_skipped += 1
+                # Track half transition
+                if f_idx == halftime_start:
+                    current_half = "halftime"
+                    print(f"\n⏸️  Halftime detected at frame {f_idx} - skipping to H2...")
+                continue
+            
+            # Track H2 start
+            if skip_halftime and f_idx == halftime_end:
+                current_half = "second_half"
+                print(f"\n▶️  Second half starting at frame {f_idx}")
+            
+            # Stop at match end
+            if f_idx > end_frame:
+                print(f"\n🏁 Match end reached at frame {f_idx}")
+                break
+        
+        frames_processed += 1
+        progress_bar.update(1)
         
         # === Pitch detection (every N frames) ===
         if use_pitch_detection and (f_idx % PITCH_DETECT_INTERVAL == 0):
@@ -1157,6 +1341,7 @@ def run_analysis(video_path, use_vlm=True, debug=False):
             for tid, p_xy, bbox in zip(p_det.tracker_id, p_det.get_anchors_coordinates(sv.Position.BOTTOM_CENTER), p_det.xyxy):
                 player_positions[tid] = p_xy
                 player_bboxes[tid] = bbox
+                player_labels[tid] = p_det.class_id[list(p_det.tracker_id).index(tid)] if p_det.class_id is not None else 2
                 current_players[tid] = {'position': p_xy, 'bbox': bbox}
                 
                 if tid not in player_teams or (f_idx % 300 == 0):
@@ -1181,6 +1366,15 @@ def run_analysis(video_path, use_vlm=True, debug=False):
         
         # === Update temporal buffer ===
         temporal_buffer.add_frame(f_idx, frame, ball_xy, current_players)
+        
+        # === MVP Analysis (Half Detection & Team Direction) ===
+        if mvp_analyzer:
+            mvp_outputs = mvp_analyzer.process_frame(
+                f_idx, frame, player_positions, player_teams,
+                player_bboxes, ball_xy
+            )
+            
+            # Auto-swap team directions at half time is handled internally by mvp_analyzer
         
         # === Pass detection logic ===
         if ball_xy is not None and p_det.tracker_id is not None:
@@ -1545,12 +1739,23 @@ def run_analysis(video_path, use_vlm=True, debug=False):
                         # #endregion
                         
                         if is_shot:
-                            # Record shot with metrics
-                            shot_detector.record_shot(
+                            shot_event = shot_detector.record_shot(
                                 f_idx, fps, shooter_tid, shooter_team,
                                 shot_type, shot_conf, shooter_pos, ball_xy,
                                 metrics=metrics  # Pass the enhanced metrics
                             )
+
+                            # === GK Save Detection (NEW) ===
+                            if shot_type == "Shot on target" and mvp_analyzer:
+                                save_event = mvp_analyzer.check_for_save(
+                                    frame, f_idx, shot_event,
+                                    player_positions, player_teams, player_bboxes,
+                                    ball_xy,
+                                    player_labels=player_labels
+                                )
+                                if save_event and debug:
+                                    print(f"  [Save] {format_time(f_idx/fps)} | Type: {save_event.get('save_type')} | Conf: {save_event.get('confidence')}%")
+
                             if debug:
                                 print(f"  [Shot] {format_time(f_idx/fps)} | {shooter_team} #{shooter_tid} | {shot_type} | Conf: {shot_conf}%")
                         elif debug and f_idx % 150 == 0:  # Debug shot detection every 150 frames (more frequent)
@@ -1648,6 +1853,21 @@ def run_analysis(video_path, use_vlm=True, debug=False):
                         cv2.putText(annotated_frame, label, (shot_x + 20, shot_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, shot_color, 2)
             
+            # Draw recent saves (NEW)
+            if mvp_analyzer:
+                recent_saves = [s for s in mvp_analyzer.gk_save_detector.get_save_events() if f_idx - s['frame'] < PASS_DISPLAY_DURATION]
+                for save_info in recent_saves:
+                    # Robust coordinate retrieval
+                    save_x = int(save_info.get('ball_x') or save_info.get('gk_x', 0))
+                    save_y = int(save_info.get('ball_y') or save_info.get('gk_y', 0))
+                    
+                    if save_x > 0 and save_y > 0:
+                        save_color = (255, 100, 0) # Orange/Cyan for saves
+                        cv2.circle(annotated_frame, (save_x, save_y), 20, save_color, 4)
+                        label = f"🧤 SAVE: {save_info.get('save_type', 'GK Save')} ({save_info.get('confidence', 0)}%)"
+                        cv2.putText(annotated_frame, label, (save_x + 25, save_y - 20),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, save_color, 2)
+
             # Draw info overlay
             cv2.putText(annotated_frame, f"Frame: {f_idx} | Time: {format_time(f_idx/fps)}", 
                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
@@ -1658,15 +1878,51 @@ def run_analysis(video_path, use_vlm=True, debug=False):
                 cv2.putText(annotated_frame, f"Shots: {shot_count}", 
                            (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
+            # Draw MVP Match Context HUD (NEW)
+            if mvp_analyzer:
+                current_half = mvp_analyzer.get_current_half(f_idx)
+                half_label = "1ST HALF" if current_half == "first_half" else "2ND HALF" if current_half == "second_half" else "BREAK"
+                cv2.putText(annotated_frame, half_label, (frame_width - 250, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                
+                # Attacking directions
+                team_a_dir = mvp_analyzer.get_attack_direction(TEAM_A_NAME, f_idx)
+                team_b_dir = mvp_analyzer.get_attack_direction(TEAM_B_NAME, f_idx)
+                if team_a_dir:
+                    dir_symbol = "→" if "left_to_right" in team_a_dir else "←"
+                    cv2.putText(annotated_frame, f"{TEAM_A_NAME}: {dir_symbol}", (frame_width - 250, 70), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                if team_b_dir:
+                    dir_symbol = "→" if "left_to_right" in team_b_dir else "←"
+                    cv2.putText(annotated_frame, f"{TEAM_B_NAME}: {dir_symbol}", (frame_width - 250, 100), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
             video_writer.write(annotated_frame)
         
         # Periodic cleanup
         if f_idx % 150 == 0 and f_idx > 0:
             torch.cuda.empty_cache()
 
+    # Close progress bar
+    progress_bar.close()
+    
     if SAVE_ANNOTATED_VIDEO and video_writer is not None:
         video_writer.release()
         print(f"\n🎥 Annotated video saved to: {output_video_path}")
+    
+    # === SMART SEGMENTATION: Print savings summary ===
+    if frame_boundaries:
+        print()
+        print("=" * 80)
+        print("💰 SMART SEGMENTATION SAVINGS")
+        print("=" * 80)
+        print(f"   Frames processed: {frames_processed:,}")
+        print(f"   Frames skipped:   {frames_skipped:,} (warmup + halftime)")
+        total_frames = frames_processed + frames_skipped
+        if total_frames > 0:
+            savings_pct = (frames_skipped / total_frames) * 100
+            print(f"   GPU time saved:   {savings_pct:.1f}%")
+        print("=" * 80)
     
     # === Print results ===
     print()
@@ -1742,6 +1998,16 @@ def run_analysis(video_path, use_vlm=True, debug=False):
         rate = (success / (success + fail) * 100) if (success + fail) > 0 else 0
         print(f"\n🏃 {team_name} Team Total: {total} passes, {success} success, {fail} fail ({rate:.1f}% success rate)")
     
+    # === MVP Final Results Compilation ===
+    if mvp_analyzer:
+        print("\n" + "=" * 80)
+        print("📊 COMPILING MVP MATCH CONTEXT RESULTS")
+        print("=" * 80)
+        mvp_results = mvp_analyzer.compile_results(pass_events, shot_detector.get_shot_events() if shot_detector else [])
+        mvp_analyzer.save_results("match_analysis_result.json")
+        mvp_analyzer.print_summary()
+        print("=" * 80)
+
     print()
     print("=" * 80)
     print(f"✅ Detailed pass report saved to: {csv_path}")
@@ -1757,7 +2023,7 @@ def run_analysis(video_path, use_vlm=True, debug=False):
         try:
             html_report_path = generate_full_scout_report_html(
                 pass_events, shot_events, video_path, annotated_video_path,
-                stats, shot_stats, fps
+                stats, shot_stats, fps, mvp_results=mvp_results if 'mvp_results' in locals() else None
             )
             print(f"📋 Scout Match Report saved to: {html_report_path}")
         except Exception as e:
@@ -1807,7 +2073,7 @@ def run_analysis(video_path, use_vlm=True, debug=False):
                 annotated_video_path = output_video_path if SAVE_ANNOTATED_VIDEO else video_path
                 combined_html_path = generate_full_scout_report_html(
                     pass_events, shot_events, video_path, annotated_video_path,
-                    stats, shot_stats, fps
+                    stats, shot_stats, fps, mvp_results=mvp_results if 'mvp_results' in locals() else None
                 )
                 print(f"📋 Combined Scout Report (Passes + Shots) saved to: {combined_html_path}")
                 print("=" * 80)
@@ -1817,27 +2083,7 @@ def run_analysis(video_path, use_vlm=True, debug=False):
             print("🎯 SHOT DETECTION: No shots detected in this video")
             print("=" * 80)
     
-    # Prepare match context data for JSON output
-    match_context_data = {
-        "h1_start": None,
-        "h1_end": None,
-        "h2_start": None,
-        "h2_end": None,
-        "team1_defending_side_h1": None
-    }
-    
-    # Try to get match context if available (from half detection)
-    # This will be populated if half detection is working
-    # For now, return None values (can be enhanced later)
-    
-    # Get shot data if available
-    shot_events_list = []
-    shot_stats_dict = {}
-    if shot_detector is not None:
-        shot_events_list = shot_detector.get_shot_events()
-        shot_stats_dict = shot_detector.get_stats()
-    
-    return stats, pass_events, match_context_data, shot_events_list, shot_stats_dict, fps
+    return stats, pass_events
 
 
 # === YouTube Download & API Integration ===
@@ -1930,13 +2176,9 @@ def download_youtube_video(url: str, output_dir: str = INPUT_VIDEO_DIR) -> Optio
         return None
 
 
-def convert_pass_events_to_json(pass_events: list, video_path: str, 
-                                stats: Dict = None, shot_events: list = None, 
-                                shot_stats: Dict = None, fps: float = 30.0,
-                                match_context: Dict = None) -> Dict[str, Any]:
+def convert_pass_events_to_json(pass_events: list, video_path: str) -> Dict[str, Any]:
     """
     Convert pass_events from run_analysis to JSON format expected by API
-    Includes half timestamps, team statistics, shots, and pass breakdowns
     Converts numpy types to native Python types for JSON serialization
     """
     def convert_to_native(value):
@@ -1953,15 +2195,6 @@ def convert_pass_events_to_json(pass_events: list, video_path: str,
             return {k: convert_to_native(v) for k, v in value.items()}
         else:
             return value
-    
-    def format_time(frame: int, fps: float) -> str:
-        """Convert frame number to MM:SS format"""
-        if frame is None or fps <= 0:
-            return "0:00"
-        seconds = int(frame / fps)
-        minutes = seconds // 60
-        secs = seconds % 60
-        return f"{minutes}:{secs:02d}"
     
     # Convert pass events to API format
     passes_json = []
@@ -1982,104 +2215,14 @@ def convert_pass_events_to_json(pass_events: list, video_path: str,
         }
         passes_json.append(pass_obj)
     
-    # Build team statistics
-    team_stats = {}
-    if stats:
-        for team_name in stats.keys():
-            team_data = stats[team_name]
-            pass_type_breakdown = {}
-            total_passes = 0
-            total_success = 0
-            total_fail = 0
-            
-            for pass_type, counts in team_data.items():
-                pass_type_breakdown[pass_type] = {
-                    "total": int(counts.get("total", 0)),
-                    "success": int(counts.get("success", 0)),
-                    "fail": int(counts.get("fail", 0))
-                }
-                total_passes += counts.get("total", 0)
-                total_success += counts.get("success", 0)
-                total_fail += counts.get("fail", 0)
-            
-            success_rate = (total_success / total_passes * 100) if total_passes > 0 else 0.0
-            
-            team_stats[team_name] = {
-                "total_passes": int(total_passes),
-                "successful_passes": int(total_success),
-                "failed_passes": int(total_fail),
-                "success_rate": round(success_rate, 2),
-                "pass_types": pass_type_breakdown
-            }
-    
-    # Build shot statistics
-    shot_statistics = {}
-    if shot_stats:
-        for shot_type in shot_stats.keys():
-            shot_statistics[shot_type] = {}
-            for team_name in shot_stats[shot_type].keys():
-                shot_statistics[shot_type][team_name] = int(shot_stats[shot_type][team_name])
-    
-    # Calculate shot totals per team
-    team_shot_totals = {}
-    shots_on_target = {}
-    shots_attempted = {}
-    
-    if shot_events:
-        for event in shot_events:
-            team = event.get("shooter_team", "Unknown")
-            shot_type = event.get("shot_type", "Unknown")
-            
-            if team not in shots_attempted:
-                shots_attempted[team] = 0
-                shots_on_target[team] = 0
-                team_shot_totals[team] = 0
-            
-            shots_attempted[team] += 1
-            team_shot_totals[team] += 1
-            
-            if "on target" in shot_type.lower() or "goal" in shot_type.lower():
-                shots_on_target[team] += 1
-    
-    # Add shot totals to team stats
-    for team_name in team_stats.keys():
-        team_stats[team_name]["shots_attempted"] = int(shots_attempted.get(team_name, 0))
-        team_stats[team_name]["shots_on_target"] = int(shots_on_target.get(team_name, 0))
-        team_stats[team_name]["shots_off_target"] = int(shots_attempted.get(team_name, 0) - shots_on_target.get(team_name, 0))
-    
-    # Build match context (half timestamps)
-    match_context_data = {}
-    if match_context:
-        if match_context.get("h1_start") is not None:
-            match_context_data["first_half"] = {
-                "start_frame": int(match_context.get("h1_start", 0)),
-                "start_time": format_time(match_context.get("h1_start", 0), fps),
-                "end_frame": int(match_context.get("h1_end", 0)) if match_context.get("h1_end") is not None else None,
-                "end_time": format_time(match_context.get("h1_end", 0), fps) if match_context.get("h1_end") is not None else None
-            }
-        if match_context.get("h2_start") is not None:
-            match_context_data["second_half"] = {
-                "start_frame": int(match_context.get("h2_start", 0)),
-                "start_time": format_time(match_context.get("h2_start", 0), fps),
-                "end_frame": int(match_context.get("h2_end", 0)) if match_context.get("h2_end") is not None else None,
-                "end_time": format_time(match_context.get("h2_end", 0), fps) if match_context.get("h2_end") is not None else None
-            }
-        if match_context.get("team1_defending_side_h1"):
-            match_context_data["team1_defending_side_h1"] = match_context.get("team1_defending_side_h1")
-    
     match_report = {
         "match_report": {
             "total_passes": int(len(pass_events)),
-            "total_shots": int(len(shot_events)) if shot_events else 0,
-            "passes": passes_json,
-            "team_statistics": team_stats,
-            "shot_statistics": shot_statistics if shot_statistics else {},
-            "match_context": match_context_data if match_context_data else {}
+            "passes": passes_json
         },
         "metadata": {
             "source_file": str(os.path.basename(video_path)),
-            "format_version": "2.0",
-            "fps": float(fps)
+            "format_version": "1.0"
         }
     }
     
@@ -3387,34 +3530,6 @@ def generate_scout_report_html(pass_events, video_path, stats, fps):
 
 if __name__ == "__main__":
     import argparse
-    import yaml
-    from datetime import datetime
-    
-    # === MLOPS: Load Configuration ===
-    cfg = {}
-    config_path = 'config.yaml'
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                cfg = yaml.safe_load(f) or {}
-            logger.info(f"✅ Configuration loaded from {config_path}")
-        except Exception as e:
-            logger.warning(f"⚠️  Could not load config.yaml: {e}")
-            logger.info("   Using default configuration")
-    else:
-        logger.info(f"ℹ️  Config file not found: {config_path}")
-        logger.info("   Using default configuration (auto-shutdown enabled)")
-    
-    # === MLOPS: Setup Logging ===
-    log_filename = f"logs/analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    os.makedirs(os.path.dirname(log_filename), exist_ok=True)
-    
-    # Add file handler to logger
-    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(file_handler)
-    
     parser = argparse.ArgumentParser(description='ScoutMe - Soccer Pass Analysis v5 (Enhanced 80%+ Accuracy)')
     parser.add_argument('--source', type=str, default='input_video/test_video_playable.mp4', 
                        help='Path to video file or YouTube URL')
@@ -3422,16 +3537,34 @@ if __name__ == "__main__":
     parser.add_argument('--debug', action='store_true', help='Show detailed logs')
     parser.add_argument('--use-api', action='store_true', help='Use API workflow (get match, submit results)')
     parser.add_argument('--save-json', action='store_true', default=True, help='Save results to JSON file')
+    # === NEW: Smart Segmentation & Parallel Processing ===
+    parser.add_argument('--smart-scan', action='store_true', default=True,
+                       help='Enable smart segmentation to skip warmup/halftime (default: True)')
+    parser.add_argument('--no-smart-scan', action='store_true',
+                       help='Disable smart segmentation (process entire video)')
+    parser.add_argument('--parallel', action='store_true',
+                       help='Enable parallel processing (H1 and H2 on separate GPUs)')
+    parser.add_argument('--gpu-h1', type=int, default=0,
+                       help='GPU device ID for H1 processing (default: 0)')
+    parser.add_argument('--gpu-h2', type=int, default=1,
+                       help='GPU device ID for H2 processing (default: 1)')
     args = parser.parse_args()
     
+    # Handle smart-scan flag logic
+    if args.no_smart_scan:
+        args.smart_scan = False
+    
     print("\n" + "=" * 80)
-    print("🚀 SCOUTME - SOCCER PASS ANALYSIS PIPELINE")
+    print("🚀 SCOUTME - SOCCER PASS ANALYSIS PIPELINE v6.0")
+    print("   (Smart Segmentation + Parallel Processing)")
     print("=" * 80)
     print(f"📋 Configuration:")
     print(f"   Source: {args.source}")
     print(f"   Use API: {'✅ YES' if args.use_api else '❌ NO'}")
     print(f"   VLM Enabled: {'✅ YES' if not args.no_vlm else '❌ NO'}")
     print(f"   Save JSON: {'✅ YES' if args.save_json else '❌ NO'}")
+    print(f"   Smart Scan: {'✅ YES (skip warmup/halftime)' if args.smart_scan else '❌ NO'}")
+    print(f"   Parallel: {'✅ YES (2x GPU)' if args.parallel else '❌ NO (single GPU)'}")
     print("=" * 80 + "\n")
     
     video_path = args.source
@@ -3590,25 +3723,86 @@ if __name__ == "__main__":
         print(f"   ⚠️  Could not get video info: {e}")
         print("   Continuing anyway...\n")
     
+    # === SMART SEGMENTATION (Fast-Scan to find match boundaries) ===
+    segmenter_results = None
+    processing_ranges = None
+    
+    if args.smart_scan:
+        print("=" * 80)
+        print("🔍 STEP 3.5: SMART SEGMENTATION (Fast-Scan)")
+        print("=" * 80)
+        print("   Scanning video to find match boundaries...")
+        print("   (Skips warmup, halftime, and post-match footage)")
+        print()
+        
+        try:
+            from match_segmenter import MatchSegmenter
+            
+            # Initialize segmenter with player detection model
+            segmenter = MatchSegmenter(
+                player_model_path=PLAYER_MODEL,
+                device=DEVICE,
+                vlm_query_func=vlm_query if not args.no_vlm else None
+            )
+            
+            # Run fast scan
+            segmenter_results = segmenter.scan_video(video_path, verbose=True)
+            processing_ranges = segmenter.get_processing_ranges()
+            
+            # Update team names from segmenter if detected
+            if segmenter_results.get('team_colors', {}).get('team_a'):
+                detected_a = segmenter_results['team_colors']['team_a']
+                detected_b = segmenter_results['team_colors']['team_b']
+                if detected_a != "Unknown":
+                    TEAM_A_NAME = detected_a
+                if detected_b != "Unknown":
+                    TEAM_B_NAME = detected_b
+                print(f"   👕 Teams detected: {TEAM_A_NAME} vs {TEAM_B_NAME}")
+            
+            # Show savings
+            if processing_ranges:
+                skipped = processing_ranges.get('frames_skipped', 0)
+                total = segmenter_results.get('scan_stats', {}).get('total_frames', 1)
+                if total > 0:
+                    savings_pct = (skipped / total) * 100
+                    print(f"\n   💰 GPU SAVINGS: Skipping {skipped:,} frames ({savings_pct:.1f}% of video)")
+            
+            print()
+        except ImportError as e:
+            print(f"   ⚠️ Smart segmentation not available: {e}")
+            print("   Continuing with full video processing...")
+            args.smart_scan = False
+        except Exception as e:
+            print(f"   ⚠️ Smart segmentation failed: {e}")
+            print("   Continuing with full video processing...")
+            args.smart_scan = False
+    
     # Run analysis
     print("=" * 80)
     print("🎬 STEP 4: STARTING VIDEO ANALYSIS")
     print("=" * 80)
     print(f"   Processing: {os.path.basename(video_path)}")
+    if processing_ranges and processing_ranges.get('h1'):
+        h1 = processing_ranges['h1']
+        h2 = processing_ranges.get('h2')
+        print(f"   H1 Range: Frame {h1['start']:,} - {h1['end']:,}")
+        if h2:
+            print(f"   H2 Range: Frame {h2['start']:,} - {h2['end']:,}")
+        print(f"   Total frames to process: {processing_ranges.get('total_frames_to_process', 'Unknown'):,}")
     print()
     
     try:
-        stats, pass_events, match_context_data, shot_events, shot_stats, fps = run_analysis(video_path, use_vlm=not args.no_vlm, debug=args.debug)
-        
-        # Convert to JSON format with full statistics
-        json_data = convert_pass_events_to_json(
-            pass_events, video_path, 
-            stats=stats,
-            shot_events=shot_events,
-            shot_stats=shot_stats,
-            fps=fps,
-            match_context=match_context_data
+        # Pass segmenter results to run_analysis for frame skipping
+        stats, pass_events = run_analysis(
+            video_path, 
+            use_vlm=not args.no_vlm, 
+            debug=args.debug,
+            frame_boundaries=processing_ranges,
+            attack_directions=segmenter_results.get('attack_directions') if segmenter_results else None
         )
+        
+        # Convert to JSON format
+        json_data = convert_pass_events_to_json(pass_events, video_path)
         
         # Save JSON file (with backup of previous file)
         if args.save_json:
@@ -3693,14 +3887,8 @@ if __name__ == "__main__":
         # MLOPS STEP 3: AUTO-SHUTDOWN (The Kill Switch)
         # ============================================================================
         # This prevents burning money on A100 when job completes or crashes
-        try:
-            auto_shutdown_enabled = cfg.get('pipeline', {}).get('auto_shutdown_enabled', True)
-            shutdown_delay = cfg.get('pipeline', {}).get('shutdown_delay_seconds', 10)
-        except (AttributeError, KeyError, NameError):
-            # Fallback if cfg is not properly loaded
-            auto_shutdown_enabled = True
-            shutdown_delay = 10
-            logger.warning("⚠️  Using default shutdown settings (config not loaded)")
+        auto_shutdown_enabled = cfg.get('pipeline', {}).get('auto_shutdown_enabled', True)
+        shutdown_delay = cfg.get('pipeline', {}).get('shutdown_delay_seconds', 10)
         
         if auto_shutdown_enabled:
             logger.info("=" * 80)
@@ -3714,20 +3902,36 @@ if __name__ == "__main__":
             
             logger.info("🛑 Shutting down Studio to save costs...")
             try:
-                # Lightning AI shutdown command
-                os.system("studio stop")
-                logger.info("✅ Shutdown command sent")
+                # Try common Lightning commands to stop the studio
+                # 1. Try 'lightning' CLI (Standard)
+                # 2. Try 'studio' CLI (Old/Alternative)
+                logger.info("🛑 Attempting to shut down Studio...")
+                
+                # Check for STUDIO_NAME environment variable
+                studio_name = os.environ.get('STUDIO_NAME')
+                if studio_name:
+                    logger.info(f"📍 Detected Studio: {studio_name}")
+                    res = os.system(f"lightning stop studio --name {studio_name}")
+                    if res == 0:
+                        logger.info("✅ Shutdown command (lightning) successful")
+                        return
+                
+                # Fallback to direct 'studio stop'
+                res = os.system("studio stop")
+                if res == 0:
+                    logger.info("✅ Shutdown command (studio) successful")
+                else:
+                    logger.warning("⚠️  Both shutdown commands failed.")
+                    logger.info("💡 TIP: To enable auto-shutdown, ensure 'lightning' is installed:")
+                    logger.info("   pip install lightning")
             except Exception as e:
                 logger.warning(f"⚠️  Could not execute shutdown: {e}")
-                logger.info("💡 You may need to manually stop the studio")
+                logger.info("💡 You may need to manually stop the studio via the Lightning UI")
         else:
             logger.info("ℹ️  Auto-shutdown disabled in config")
         
         logger.info("=" * 80)
-        if 'log_filename' in locals():
-            logger.info("📝 Full log saved to: " + log_filename)
-        else:
-            logger.info("📝 Logging to console")
+        logger.info("📝 Full log saved to: " + log_filename)
         logger.info("=" * 80)
 
 
