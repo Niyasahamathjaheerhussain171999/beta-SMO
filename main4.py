@@ -278,99 +278,54 @@ def vlm_query(frame_crop, prompt, max_tokens=50):
         input_length = input_ids.shape[1]
         generated_tokens = generated_ids[0, input_length:]
         response = processor.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        
+        # Clean up GPU memory after each query
+        torch.cuda.empty_cache()
+        
         return response
     except Exception as e:
         print(f"VLM Error: {e}")
+        torch.cuda.empty_cache()  # Clean up on error too
         return "unknown"
 
-# --- 3. LOAD QWEN2.5-VL (VIDEO LAYER) ---
-print("📹 Loading Qwen2.5-VL for Video Analysis...")
-try:
-    from qwen_vl_utils import process_vision_info
-    # Use AutoModelForVision2Seq as recommended for Qwen2.5-VL with 4-bit quantization
-    from transformers import AutoModelForVision2Seq, AutoProcessor as QwenAutoProcessor
-    
-    QWEN_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
-    try:
-        qwen_model = AutoModelForVision2Seq.from_pretrained(
-            QWEN_MODEL_ID, 
-            device_map="auto", 
-            trust_remote_code=True,
-            quantization_config=bnb_config
-        )
-        # Also needed for processor sometimes, but QwenAutoProcessor usually handles it
-        qwen_processor = QwenAutoProcessor.from_pretrained(QWEN_MODEL_ID, trust_remote_code=True)
-        QWEN_AVAILABLE = True
-        print(f"✅ Qwen2.5-VL Model Loaded: {QWEN_MODEL_ID}")
-    except Exception as e:
-        print(f"⚠️  Qwen2.5-VL Load Failed (Fallback to Molmo only): {e}")
-        QWEN_AVAILABLE = False
-        qwen_model = None
-except ImportError:
-    print("⚠️  Qwen dependencies (qwen_vl_utils) not found.")
-    QWEN_AVAILABLE = False
-    qwen_model = None
+# --- 3. SKIP QWEN2.5-VL (DISABLED FOR STABILITY) ---
+# Qwen causes GPU memory issues when running with Molmo
+# Using Molmo-only for stable, accurate VLM verification
+print("📹 Qwen2.5-VL: DISABLED (Using Molmo-only for stability)")
+QWEN_AVAILABLE = False
+qwen_model = None
+qwen_processor = None
+QWEN_MODEL_ID = None
+
+# Keep the function for compatibility but it will use Molmo fallback
 
 def qwen_video_query(video_frames, prompt):
     """
-    Query Qwen2.5-VL with a video clip (list of numpy arrays or PIL Images).
+    Query VLM with a video clip - NOW USES MOLMO FALLBACK FOR STABILITY.
+    Analyzes key frame instead of full video to prevent GPU crashes.
     """
-    if not QWEN_AVAILABLE or not video_frames:
-        raise RuntimeError("Qwen model not loaded")
+    if not video_frames:
+        return "No frames provided"
 
     try:
-        # Convert frames to standard list of PIL images if needed, or save to temp file?
-        # Qwen2-VL supports passing list of images as "video"
-        
-        # Sample frames to reduce load (e.g., 8 frames for the clip is usually enough for Qwen)
-        # 3 seconds @ 25fps = 75 frames. Take 8 evenly spaced.
+        # Use middle frame for analysis (most representative)
         total_frames = len(video_frames)
-        if total_frames > 8:
-            indices = np.linspace(0, total_frames - 1, 8, dtype=int)
-            sample_frames = [Image.fromarray(cv2.cvtColor(video_frames[i], cv2.COLOR_BGR2RGB)) for i in indices]
+        middle_idx = total_frames // 2
+        key_frame = video_frames[middle_idx]
+        
+        # Convert BGR to RGB if needed
+        if len(key_frame.shape) == 3 and key_frame.shape[2] == 3:
+            key_frame_rgb = cv2.cvtColor(key_frame, cv2.COLOR_BGR2RGB)
         else:
-            sample_frames = [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in video_frames]
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "video",
-                        "video": sample_frames, # Pass list of PIL images as "video"
-                        "fps": 1.0, # Not strictly used with image list but required by some processors
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
+            key_frame_rgb = key_frame
         
-        text = qwen_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        image_inputs, video_inputs = process_vision_info(messages)
-        
-        inputs = qwen_processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
-        inputs = inputs.to(qwen_model.device)
-
-        with torch.no_grad():
-            generated_ids = qwen_model.generate(**inputs, max_new_tokens=128)
-            
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        response = qwen_processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )[0]
-        
+        # Use Molmo for stable analysis
+        response = vlm_query(key_frame_rgb, prompt, max_tokens=100)
         return response
+        
     except Exception as e:
-        print(f"Qwen Error: {e}")
-        return "Qwen error"
+        print(f"     ⚠️ Video Analysis Fallback Error: {e}")
+        return "Analysis error - using geometric detection"
 
 
 
