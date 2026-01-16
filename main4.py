@@ -259,68 +259,70 @@ def vlm_query(frame_crop, prompt, max_tokens=50):
         return "unknown"
     
     try:
-        # Resize image to safe dimensions (Molmo works best with 384x384)
-        pil_img = Image.fromarray(frame_crop)
-        # Resize to prevent index out of bounds errors
-        pil_img = pil_img.resize((384, 384), Image.LANCZOS)
+        # CRITICAL FIX: Ensure image is RGB and properly formatted
+        if isinstance(frame_crop, np.ndarray):
+            # Ensure 3 channels (RGB)
+            if len(frame_crop.shape) == 2:
+                frame_crop = cv2.cvtColor(frame_crop, cv2.COLOR_GRAY2RGB)
+            elif frame_crop.shape[2] == 4:
+                frame_crop = cv2.cvtColor(frame_crop, cv2.COLOR_BGRA2RGB)
+            elif frame_crop.shape[2] == 3:
+                # Assume BGR from OpenCV, convert to RGB
+                frame_crop = cv2.cvtColor(frame_crop, cv2.COLOR_BGR2RGB)
+            
+            # Ensure uint8
+            if frame_crop.dtype != np.uint8:
+                frame_crop = (frame_crop * 255).astype(np.uint8) if frame_crop.max() <= 1 else frame_crop.astype(np.uint8)
+            
+            pil_img = Image.fromarray(frame_crop)
+        else:
+            pil_img = frame_crop
         
+        # CRITICAL: Resize to 336x336 (Molmo's native resolution)
+        # This prevents the "index out of bounds" CUDA error
+        pil_img = pil_img.resize((336, 336), Image.LANCZOS)
+        
+        # Ensure RGB mode
+        if pil_img.mode != 'RGB':
+            pil_img = pil_img.convert('RGB')
+        
+        # Use model.generate() instead of manual token generation (more stable)
         inputs = processor.process(images=[pil_img], text=prompt)
         
-        processed_inputs = {}
+        # Move to device with proper dtype handling
+        input_dict = {}
         for key, value in inputs.items():
             if isinstance(value, torch.Tensor):
-                # FIX: Cast floating point tensors to model dtype (Float vs Half fix)
                 if torch.is_floating_point(value):
-                    processed_inputs[key] = value.to(vlm_model.device, dtype=vlm_model.dtype).unsqueeze(0)
+                    input_dict[key] = value.to(vlm_model.device, dtype=vlm_model.dtype).unsqueeze(0)
                 else:
-                    processed_inputs[key] = value.to(vlm_model.device).unsqueeze(0)
+                    input_dict[key] = value.to(vlm_model.device).unsqueeze(0)
             else:
-                processed_inputs[key] = value
+                input_dict[key] = value
         
         with torch.inference_mode():
-            torch.cuda.empty_cache()
+            # Use generate() for stability
+            output_ids = vlm_model.generate(
+                **input_dict,
+                max_new_tokens=max_tokens,
+                do_sample=False,
+                use_cache=False,
+                pad_token_id=processor.tokenizer.pad_token_id,
+            )
             
-            input_ids = processed_inputs['input_ids']
-            batch_size, seq_len = input_ids.shape
-            eos_token_id = processor.tokenizer.eos_token_id
-            
-            generated_ids = input_ids.clone()
-            
-            for step in range(max_tokens):
-                current_seq_len = generated_ids.shape[1]
-                
-                model_inputs = {
-                    'input_ids': generated_ids,
-                    'position_ids': torch.arange(current_seq_len, device=vlm_model.device, dtype=torch.long).unsqueeze(0),
-                    'attention_mask': torch.ones(batch_size, current_seq_len, device=vlm_model.device, dtype=torch.long),
-                    'use_cache': False,
-                }
-                
-                if step == 0:
-                    for key in processed_inputs:
-                        if key not in ['input_ids', 'position_ids', 'attention_mask']:
-                            model_inputs[key] = processed_inputs[key]
-                
-                outputs = vlm_model(**model_inputs)
-                next_token_logits = outputs.logits[:, -1, :]
-                next_token_id = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-                generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
-                
-                if next_token_id.item() == eos_token_id:
-                    break
-            
-            torch.cuda.empty_cache()
+            # Decode only the new tokens
+            input_len = input_dict['input_ids'].shape[1]
+            generated_tokens = output_ids[0, input_len:]
+            response = processor.tokenizer.decode(generated_tokens, skip_special_tokens=True)
         
-        input_length = input_ids.shape[1]
-        generated_tokens = generated_ids[0, input_length:]
-        response = processor.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-        
-        # Clean up GPU memory after each query
+        # Clean up
+        del input_dict, output_ids
         torch.cuda.empty_cache()
         
-        return response
+        return response.strip()
+        
     except Exception as e:
-        print(f"VLM Error: {e}")
+        print(f"     ⚠️ VLM Error: {e}")
         try:
             torch.cuda.empty_cache()
         except:
