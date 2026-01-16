@@ -205,30 +205,66 @@ bnb_config = BitsAndBytesConfig(
     bnb_4bit_use_double_quant=True,
 )
 
-# --- 2. LOAD MOLMO AI ---
-print("🧠 Loading Molmo-7B into GPU...")
-try:
-    torch.backends.cuda.enable_flash_sdp(False)
-    torch.backends.cuda.enable_mem_efficient_sdp(False)
-except:
-    pass
+# --- 2. VLM LOADING (CONDITIONAL) ---
+# Check if --no-vlm flag is passed BEFORE loading heavy models
+import sys
+VLM_DISABLED_BY_FLAG = '--no-vlm' in sys.argv
 
-model_id = 'allenai/Molmo-7B-D-0924'
-processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-vlm_model = AutoModelForCausalLM.from_pretrained(
-    model_id, 
-    trust_remote_code=True, 
-    device_map="auto", 
-    quantization_config=bnb_config
-)
-vlm_model.config.use_cache = False
-vlm_model.eval()
+vlm_model = None
+processor = None
+QWEN_AVAILABLE = False
+qwen_model = None
+qwen_processor = None
+QWEN_MODEL_ID = None
+
+if VLM_DISABLED_BY_FLAG:
+    print("🧠 VLM: DISABLED (--no-vlm flag)")
+    print("   ✅ Using geometric detection only (fast & stable)")
+else:
+    print("🧠 Loading Molmo-7B into GPU...")
+    try:
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+    except:
+        pass
+
+    try:
+        model_id = 'allenai/Molmo-7B-D-0924'
+        processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+        vlm_model = AutoModelForCausalLM.from_pretrained(
+            model_id, 
+            trust_remote_code=True, 
+            device_map="auto", 
+            quantization_config=bnb_config
+        )
+        vlm_model.config.use_cache = False
+        vlm_model.eval()
+        print(f"   ✅ Molmo-7B loaded successfully")
+    except Exception as e:
+        print(f"   ⚠️ VLM load failed: {e}")
+        print(f"   ✅ Falling back to geometric detection (stable)")
+        vlm_model = None
+        processor = None
+
+# Qwen disabled for stability
+print("📹 Qwen2.5-VL: DISABLED (stability mode)")
 
 
 def vlm_query(frame_crop, prompt, max_tokens=50):
-    """Generic VLM query function with extended token output"""
+    """Generic VLM query function - returns 'unknown' if VLM disabled"""
+    global vlm_model, processor
+    
+    # If VLM is disabled, return immediately
+    if vlm_model is None or processor is None:
+        return "unknown"
+    
     try:
-        inputs = processor.process(images=[Image.fromarray(frame_crop)], text=prompt)
+        # Resize image to safe dimensions (Molmo works best with 384x384)
+        pil_img = Image.fromarray(frame_crop)
+        # Resize to prevent index out of bounds errors
+        pil_img = pil_img.resize((384, 384), Image.LANCZOS)
+        
+        inputs = processor.process(images=[pil_img], text=prompt)
         
         processed_inputs = {}
         for key, value in inputs.items():
@@ -285,17 +321,11 @@ def vlm_query(frame_crop, prompt, max_tokens=50):
         return response
     except Exception as e:
         print(f"VLM Error: {e}")
-        torch.cuda.empty_cache()  # Clean up on error too
+        try:
+            torch.cuda.empty_cache()
+        except:
+            pass
         return "unknown"
-
-# --- 3. SKIP QWEN2.5-VL (DISABLED FOR STABILITY) ---
-# Qwen causes GPU memory issues when running with Molmo
-# Using Molmo-only for stable, accurate VLM verification
-print("📹 Qwen2.5-VL: DISABLED (Using Molmo-only for stability)")
-QWEN_AVAILABLE = False
-qwen_model = None
-qwen_processor = None
-QWEN_MODEL_ID = None
 
 # Keep the function for compatibility but it will use Molmo fallback
 
@@ -303,7 +333,14 @@ def qwen_video_query(video_frames, prompt):
     """
     Query VLM with a video clip - NOW USES MOLMO FALLBACK FOR STABILITY.
     Analyzes key frame instead of full video to prevent GPU crashes.
+    Returns geometric fallback if VLM is disabled.
     """
+    global vlm_model
+    
+    # If VLM disabled, return immediately
+    if vlm_model is None:
+        return "geometric_fallback"
+    
     if not video_frames:
         return "No frames provided"
 
@@ -325,7 +362,7 @@ def qwen_video_query(video_frames, prompt):
         
     except Exception as e:
         print(f"     ⚠️ Video Analysis Fallback Error: {e}")
-        return "Analysis error - using geometric detection"
+        return "geometric_fallback"
 
 
 
